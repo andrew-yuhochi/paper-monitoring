@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paper Digest &mdash; {{ run_date }}</title>
+  <style>
+    /* ---- Base ---- */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 960px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #333;
+      line-height: 1.5;
+    }
+    a { color: #1a73e8; }
+    a:hover { text-decoration: underline; }
+    h1 { margin: 0; font-size: 1.8rem; }
+    h2 { font-size: 1.2rem; margin: 0 0 0.8rem; }
+    header {
+      border-bottom: 2px solid #eee;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+    }
+    .meta { color: #666; margin: 0.4rem 0 0; font-size: 0.9rem; }
+    .empty { color: #666; font-style: italic; margin-top: 2rem; }
+
+    /* ---- Tier sections ---- */
+    .tier-section { margin-bottom: 2rem; }
+    .tier-section > h2 {
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 0.4rem;
+    }
+    details.tier-section > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 0.3rem 0;
+    }
+    details.tier-section > summary::-webkit-details-marker { display: none; }
+    details.tier-section > summary h2 {
+      display: inline;
+      border-bottom: none;
+    }
+    details.tier-section > summary::before {
+      content: "\25B6\FE0E  ";
+      font-size: 0.7rem;
+      color: #888;
+      margin-right: 0.3rem;
+    }
+    details[open].tier-section > summary::before { content: "\25BC\FE0E  "; }
+
+    /* ---- Paper cards ---- */
+    .paper-card {
+      border: 1px solid #e0e0e0;
+      border-left: 4px solid #ccc;
+      border-radius: 4px;
+      padding: 1rem;
+      margin-bottom: 0.8rem;
+      background: #fafafa;
+    }
+    .paper-card.tier-1 { border-left-color: #B8860B; background: #fffdf0; }
+    .paper-card.tier-2 { border-left-color: #888; background: #f9f9f9; }
+    .paper-card.tier-3 { border-left-color: #2196F3; }
+    .paper-card.tier-4 { border-left-color: #9E9E9E; }
+    .paper-card.tier-5 { border-left-color: #4CAF50; }
+    .paper-card.tier-failed { border-left-color: #e57373; background: #fff8f8; }
+
+    /* ---- Card header ---- */
+    .paper-header {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-bottom: 0.4rem;
+    }
+    .paper-title {
+      font-weight: 600;
+      font-size: 1.0rem;
+      text-decoration: none;
+    }
+    .paper-title:hover { text-decoration: underline; }
+
+    /* ---- Tier badges ---- */
+    .tier-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 0.15rem 0.45rem;
+      border-radius: 3px;
+      color: #fff;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .tier-badge-1      { background: #B8860B; }
+    .tier-badge-2      { background: #808080; }
+    .tier-badge-3      { background: #2196F3; }
+    .tier-badge-4      { background: #9E9E9E; }
+    .tier-badge-5      { background: #4CAF50; }
+    .tier-badge-failed { background: #e57373; }
+
+    /* ---- Confidence ---- */
+    .confidence {
+      font-size: 0.7rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 3px;
+      background: #f0f0f0;
+      color: #555;
+    }
+    .confidence-high   { background: #e8f5e9; color: #2e7d32; }
+    .confidence-medium { background: #fff3e0; color: #e65100; }
+    .confidence-low    { background: #fce4ec; color: #c62828; }
+
+    /* ---- Paper meta ---- */
+    .paper-meta {
+      font-size: 0.82rem;
+      color: #666;
+      margin-bottom: 0.5rem;
+    }
+    .paper-meta span + span::before { content: " \00B7 "; }
+
+    /* ---- Summary and contributions ---- */
+    .summary {
+      margin: 0.4rem 0;
+      font-size: 0.92rem;
+      color: #444;
+    }
+    .contributions {
+      margin: 0.3rem 0 0.3rem 1.4rem;
+      font-size: 0.88rem;
+      color: #444;
+    }
+    .contributions li { margin-bottom: 0.15rem; }
+
+    /* ---- Concept badges ---- */
+    .concept-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin: 0.4rem 0;
+    }
+    .concept-badge {
+      font-size: 0.72rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 10px;
+      background: #e8eaf6;
+      color: #3949ab;
+      border: 1px solid #c5cae9;
+      cursor: default;
+    }
+
+    /* ---- Paper links ---- */
+    .paper-links {
+      margin-top: 0.5rem;
+      font-size: 0.82rem;
+    }
+    .paper-links a { margin-right: 0.8rem; text-decoration: none; }
+    .paper-links a:hover { text-decoration: underline; }
+
+    /* ---- Seed note (T5) ---- */
+    .seed-note {
+      margin-top: 0.5rem;
+      font-size: 0.82rem;
+      color: #555;
+      background: #f0f4ff;
+      padding: 0.4rem 0.6rem;
+      border-radius: 4px;
+      border-left: 3px solid #7986cb;
+    }
+    .seed-note code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.85em;
+    }
+
+    /* ---- Failure note ---- */
+    .failure-note {
+      font-size: 0.85rem;
+      color: #c62828;
+      font-style: italic;
+      margin-bottom: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Weekly ML/DS Paper Digest</h1>
+    <p class="meta">{{ run_date }} &mdash; {{ total_count }} paper{% if total_count != 1 %}s{% endif %} classified</p>
+  </header>
+
+  {% if not entries %}
+    <p class="empty">No papers found this week.</p>
+  {% else %}
+
+    {# --- Tier 1: Game-changers (expanded) --- #}
+    {% if tier_groups.get(1) %}
+    <section class="tier-section tier-1">
+      <h2>Tier 1 &mdash; Game-changers ({{ tier_groups[1]|length }})</h2>
+      {% for entry in tier_groups[1] %}
+        {% include 'partials/paper_card.html.j2' %}
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {# --- Tier 2: Clear winners (expanded) --- #}
+    {% if tier_groups.get(2) %}
+    <section class="tier-section tier-2">
+      <h2>Tier 2 &mdash; Clear Winners ({{ tier_groups[2]|length }})</h2>
+      {% for entry in tier_groups[2] %}
+        {% include 'partials/paper_card.html.j2' %}
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {# --- Tiers 3-5: collapsed by default --- #}
+    {% for tier_num, tier_label in [(3, "Specialized Improvements"), (4, "Argumentative"), (5, "Surveys")] %}
+      {% if tier_groups.get(tier_num) %}
+      <details class="tier-section tier-{{ tier_num }}">
+        <summary><h2>Tier {{ tier_num }} &mdash; {{ tier_label }} ({{ tier_groups[tier_num]|length }})</h2></summary>
+        {% for entry in tier_groups[tier_num] %}
+          {% include 'partials/paper_card.html.j2' %}
+        {% endfor %}
+      </details>
+      {% endif %}
+    {% endfor %}
+
+    {# --- Classification failures (collapsed) --- #}
+    {% if tier_groups.get(none) %}
+    <details class="tier-section tier-failed">
+      <summary><h2>Classification Failures ({{ tier_groups[none]|length }})</h2></summary>
+      <p class="failure-note">These papers could not be classified. Review manually.</p>
+      {% for entry in tier_groups[none] %}
+        {% include 'partials/paper_card.html.j2' %}
+      {% endfor %}
+    </details>
+    {% endif %}
+
+  {% endif %}
+</body>
+</html>

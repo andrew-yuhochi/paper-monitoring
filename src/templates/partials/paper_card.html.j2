@@ -1,0 +1,50 @@
+{# Paper card partial — rendered per DigestEntry in the weekly digest.
+   Variables available from the calling template's for-loop:
+     entry  — DigestEntry (paper, classification, linked_concepts, hf_upvotes, prefilter_score)
+#}
+<div class="paper-card {% if entry.classification.classification_failed %}tier-failed{% else %}tier-{{ entry.classification.tier }}{% endif %}">
+  <div class="paper-header">
+    {% if entry.classification.classification_failed %}
+    <span class="tier-badge tier-badge-failed">FAILED</span>
+    {% else %}
+    <span class="tier-badge tier-badge-{{ entry.classification.tier }}">T{{ entry.classification.tier }}</span>
+    <span class="confidence confidence-{{ entry.classification.confidence }}">{{ entry.classification.confidence }}</span>
+    {% endif %}
+    <a class="paper-title" href="{{ entry.paper.arxiv_url }}" target="_blank" rel="noopener">{{ entry.paper.title }}</a>
+  </div>
+
+  <div class="paper-meta">
+    <span>{{ entry.paper.authors | join(", ") }}</span>
+    <span>{{ entry.paper.published_date }}</span>
+    {% if entry.hf_upvotes > 0 %}<span>{{ entry.hf_upvotes }} upvotes</span>{% endif %}
+  </div>
+
+  {% if entry.classification.summary %}
+  <p class="summary">{{ entry.classification.summary }}</p>
+  {% endif %}
+
+  {% if entry.classification.key_contributions %}
+  <ul class="contributions">
+    {% for contrib in entry.classification.key_contributions %}
+    <li>{{ contrib }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if entry.linked_concepts %}
+  <div class="concept-badges">
+    {% for concept in entry.linked_concepts %}
+      {% include 'partials/concept_badge.html.j2' %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="paper-links">
+    <a href="{{ entry.paper.arxiv_url }}" target="_blank" rel="noopener">arXiv</a>
+    <a href="{{ entry.paper.pdf_url }}" target="_blank" rel="noopener">PDF</a>
+  </div>
+
+  {% if entry.classification.tier == 5 %}
+  <p class="seed-note">Consider adding to knowledge bank: <code>python seed.py --arxiv-id {{ entry.paper.arxiv_id }}</code></p>
+  {% endif %}
+</div>

@@ -1,0 +1,6 @@
+{# Concept badge partial — rendered per Node in entry.linked_concepts.
+   Hover text shows the concept description from the knowledge bank.
+   Variables available from the calling template's for-loop:
+     concept  — Node (id, node_type, label, properties)
+#}
+<span class="concept-badge" title="{{ concept.properties.get('description', '') }}">{{ concept.label }}</span>
