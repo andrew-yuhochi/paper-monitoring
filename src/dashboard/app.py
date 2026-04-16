@@ -231,6 +231,15 @@ with tab_papers:
                         st.markdown(f"### {tier_label}")
                     with col_content:
                         st.markdown(f"**{p['label']}**")
+                        published = props.get("published_date", "")
+                        run_dt = props.get("run_date", "")
+                        date_parts = []
+                        if published:
+                            date_parts.append(f"Published: {published}")
+                        if run_dt:
+                            date_parts.append(f"Classified: {run_dt}")
+                        if date_parts:
+                            st.caption(" · ".join(date_parts))
                         st.write(summary)
                         if contributions:
                             st.markdown("**Key contributions:** " + " | ".join(contributions))
@@ -276,6 +285,8 @@ with tab_concepts:
                     st.write(desc)
                     if sources:
                         st.caption(f"Source papers: {', '.join(sources)}")
+                    elif props.get("seeded_from"):
+                        st.caption(f"Source: {props['seeded_from']}")
                     if prereqs:
                         st.caption(f"Prerequisites: {', '.join(prereqs)}")
 

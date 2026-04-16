@@ -151,6 +151,17 @@ class ArxivFetcher:
             if resp.status_code == 200:
                 return resp
 
+            if resp.status_code == 429:
+                # Rate limited — retry with longer backoff
+                retry_after = int(resp.headers.get("Retry-After", delay * 10))
+                logger.warning(
+                    "arXiv rate-limited (429, attempt %d/3) — waiting %ds",
+                    attempt + 1, retry_after,
+                )
+                time.sleep(retry_after)
+                last_exc = requests.HTTPError(response=resp)
+                continue
+
             if 400 <= resp.status_code < 500:
                 logger.error(
                     "arXiv returned HTTP %d (client error); aborting. params=%s",

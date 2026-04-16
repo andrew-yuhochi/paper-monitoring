@@ -57,46 +57,129 @@ SURVEY_PAPER_IDS = [
 
 # ---------------------------------------------------------------------------
 # Textbook chapter configuration
-# TODO: Update page ranges after downloading PDFs to data/textbooks/.
-#       Ranges are 0-indexed (start_page, end_page, source_description).
-#       Current ranges are approximate placeholders.
+# Page ranges are 0-indexed (start_page, end_page inclusive, source_description).
+# Derived from each PDF's table of contents via fitz.get_toc() (1-indexed) minus 1.
+# Skipped: prefaces, indices, bibliographies, notation appendices, pure
+#   implementation/tooling sections, and non-ML sections (Sutton Psychology/Neuroscience).
 # ---------------------------------------------------------------------------
 
 _PDF_DIR = Path(__file__).parent.parent / "data" / "textbooks"
 
 TEXTBOOK_CONFIGS = [
-    (
-        _PDF_DIR / "goodfellow_deep_learning.pdf",
-        [
-            (14, 55, "Goodfellow et al. Deep Learning, Ch. 2: Linear Algebra"),
-            (56, 97, "Goodfellow et al. Deep Learning, Ch. 3: Probability"),
-            (98, 139, "Goodfellow et al. Deep Learning, Ch. 4: Numerical Computation"),
-            (140, 219, "Goodfellow et al. Deep Learning, Ch. 5: Machine Learning Basics"),
-            (220, 281, "Goodfellow et al. Deep Learning, Ch. 6: Deep Feedforward Networks"),
-        ],
-    ),
+    # ── Murphy, Probabilistic Machine Learning: An Introduction (860 pp) ──
     (
         _PDF_DIR / "murphy_pml_intro.pdf",
         [
-            (49, 100, "Murphy PML Introduction, Ch. 2: Probability"),
-            (101, 160, "Murphy PML Introduction, Ch. 3: Probability — Multivariate Models"),
-            (400, 460, "Murphy PML Introduction, Ch. 10: Linear Discriminant Analysis"),
+            (30, 61, "Murphy PML, Ch. 1: Introduction"),
+            (62, 105, "Murphy PML, Ch. 2: Probability — Univariate Models"),
+            (106, 135, "Murphy PML, Ch. 3: Probability — Multivariate Models"),
+            (136, 195, "Murphy PML, Ch. 4: Statistics"),
+            (196, 235, "Murphy PML, Ch. 5: Decision Theory"),
+            (236, 257, "Murphy PML, Ch. 6: Information Theory"),
+            (258, 303, "Murphy PML, Ch. 7: Linear Algebra"),
+            (304, 351, "Murphy PML, Ch. 8: Optimization"),
+            (352, 367, "Murphy PML, Ch. 9: Linear Discriminant Analysis"),
+            (368, 399, "Murphy PML, Ch. 10: Logistic Regression"),
+            (400, 443, "Murphy PML, Ch. 11: Linear Regression"),
+            (444, 453, "Murphy PML, Ch. 12: Generalized Linear Models"),
+            (454, 495, "Murphy PML, Ch. 13: Neural Networks for Tabular Data"),
+            (496, 531, "Murphy PML, Ch. 14: Neural Networks for Images"),
+            (532, 575, "Murphy PML, Ch. 15: Neural Networks for Sequences"),
+            (576, 595, "Murphy PML, Ch. 16: Exemplar-based Methods"),
+            (596, 631, "Murphy PML, Ch. 17: Kernel Methods"),
+            (632, 655, "Murphy PML, Ch. 18: Trees, Forests, Bagging, and Boosting"),
+            (656, 685, "Murphy PML, Ch. 19: Learning with Fewer Labeled Examples"),
+            (686, 743, "Murphy PML, Ch. 20: Dimensionality Reduction"),
+            (744, 769, "Murphy PML, Ch. 21: Clustering"),
+            (770, 781, "Murphy PML, Ch. 22: Recommender Systems"),
+            (782, 801, "Murphy PML, Ch. 23: Graph Embeddings"),
         ],
     ),
+    # ── Hastie, Tibshirani, Friedman — Elements of Statistical Learning (764 pp) ──
     (
         _PDF_DIR / "hastie_esl.pdf",
         [
-            (9, 42, "Hastie et al. ESL, Ch. 2: Overview of Supervised Learning"),
-            (43, 82, "Hastie et al. ESL, Ch. 3: Linear Methods for Regression"),
-            (194, 228, "Hastie et al. ESL, Ch. 7: Model Assessment and Selection"),
+            (27, 60, "Hastie ESL, Ch. 2: Overview of Supervised Learning"),
+            (61, 118, "Hastie ESL, Ch. 3: Linear Methods for Regression"),
+            (119, 156, "Hastie ESL, Ch. 4: Linear Methods for Classification"),
+            (157, 208, "Hastie ESL, Ch. 5: Basis Expansions and Regularization"),
+            (209, 236, "Hastie ESL, Ch. 6: Kernel Smoothing Methods"),
+            (237, 278, "Hastie ESL, Ch. 7: Model Assessment and Selection"),
+            (279, 312, "Hastie ESL, Ch. 8: Model Inference and Averaging"),
+            (313, 354, "Hastie ESL, Ch. 9: Additive Models, Trees, and Related Methods"),
+            (355, 406, "Hastie ESL, Ch. 10: Boosting and Additive Trees"),
+            (407, 434, "Hastie ESL, Ch. 11: Neural Networks"),
+            (435, 476, "Hastie ESL, Ch. 12: Support Vector Machines and Flexible Discriminants"),
+            (477, 502, "Hastie ESL, Ch. 13: Prototype Methods and Nearest-Neighbors"),
+            (503, 604, "Hastie ESL, Ch. 14: Unsupervised Learning"),
+            (605, 622, "Hastie ESL, Ch. 15: Random Forests"),
+            (623, 642, "Hastie ESL, Ch. 16: Ensemble Learning"),
+            (643, 666, "Hastie ESL, Ch. 17: Undirected Graphical Models"),
+            (667, 716, "Hastie ESL, Ch. 18: High-Dimensional Problems"),
         ],
     ),
+    # ── Bishop — Pattern Recognition and Machine Learning (758 pp) ──
+    (
+        _PDF_DIR / "bishop_prml.pdf",
+        [
+            (20, 85, "Bishop PRML, Ch. 1: Introduction"),
+            (86, 155, "Bishop PRML, Ch. 2: Probability Distributions"),
+            (156, 197, "Bishop PRML, Ch. 3: Linear Models for Regression"),
+            (198, 243, "Bishop PRML, Ch. 4: Linear Models for Classification"),
+            (244, 309, "Bishop PRML, Ch. 5: Neural Networks"),
+            (310, 343, "Bishop PRML, Ch. 6: Kernel Methods"),
+            (344, 377, "Bishop PRML, Ch. 7: Sparse Kernel Machines"),
+            (378, 441, "Bishop PRML, Ch. 8: Graphical Models"),
+            (442, 479, "Bishop PRML, Ch. 9: Mixture Models and EM"),
+            (480, 541, "Bishop PRML, Ch. 10: Approximate Inference"),
+            (542, 577, "Bishop PRML, Ch. 11: Sampling Methods"),
+            (578, 623, "Bishop PRML, Ch. 12: Continuous Latent Variables"),
+            (624, 671, "Bishop PRML, Ch. 13: Sequential Data"),
+            (672, 695, "Bishop PRML, Ch. 14: Combining Models"),
+        ],
+    ),
+    # ── Sutton & Barto — Reinforcement Learning: An Introduction (548 pp) ──
     (
         _PDF_DIR / "sutton_barto_rl.pdf",
         [
-            (47, 90, "Sutton & Barto RL, Ch. 3: Finite Markov Decision Processes"),
-            (91, 130, "Sutton & Barto RL, Ch. 4: Dynamic Programming"),
-            (265, 320, "Sutton & Barto RL, Ch. 13: Policy Gradient Methods"),
+            (22, 45, "Sutton RL, Ch. 1: Introduction"),
+            (46, 67, "Sutton RL, Ch. 2: Multi-armed Bandits"),
+            (68, 93, "Sutton RL, Ch. 3: Finite Markov Decision Processes"),
+            (94, 111, "Sutton RL, Ch. 4: Dynamic Programming"),
+            (112, 139, "Sutton RL, Ch. 5: Monte Carlo Methods"),
+            (140, 161, "Sutton RL, Ch. 6: Temporal-Difference Learning"),
+            (162, 179, "Sutton RL, Ch. 7: n-step Bootstrapping"),
+            (180, 217, "Sutton RL, Ch. 8: Planning and Learning with Tabular Methods"),
+            (218, 263, "Sutton RL, Ch. 9: On-policy Prediction with Approximation"),
+            (264, 277, "Sutton RL, Ch. 10: On-policy Control with Approximation"),
+            (278, 307, "Sutton RL, Ch. 11: Off-policy Methods with Approximation"),
+            (308, 341, "Sutton RL, Ch. 12: Eligibility Traces"),
+            (342, 361, "Sutton RL, Ch. 13: Policy Gradient Methods"),
+            (442, 479, "Sutton RL, Ch. 16: Applications and Case Studies"),
+            (480, 501, "Sutton RL, Ch. 17: Frontiers"),
+        ],
+    ),
+    # ── Zhang et al. — Dive into Deep Learning (1151 pp, Goodfellow substitute) ──
+    (
+        _PDF_DIR / "zhang_d2l.pdf",
+        [
+            (40, 68, "D2L, Ch. 1: Introduction"),
+            (69, 120, "D2L, Ch. 2: Preliminaries"),
+            (121, 163, "D2L, Ch. 3: Linear Neural Networks for Regression"),
+            (164, 205, "D2L, Ch. 4: Linear Neural Networks for Classification"),
+            (206, 245, "D2L, Ch. 5: Multilayer Perceptrons"),
+            (272, 306, "D2L, Ch. 7: Convolutional Neural Networks"),
+            (307, 363, "D2L, Ch. 8: Modern Convolutional Neural Networks"),
+            (364, 407, "D2L, Ch. 9: Recurrent Neural Networks"),
+            (408, 447, "D2L, Ch. 10: Modern Recurrent Neural Networks"),
+            (448, 506, "D2L, Ch. 11: Attention Mechanisms and Transformers"),
+            (507, 585, "D2L, Ch. 12: Optimization Algorithms"),
+            (631, 728, "D2L, Ch. 14: Computer Vision"),
+            (729, 782, "D2L, Ch. 15: NLP Pretraining"),
+            (783, 819, "D2L, Ch. 16: NLP Applications"),
+            (820, 835, "D2L, Ch. 17: Reinforcement Learning"),
+            (836, 866, "D2L, Ch. 18: Gaussian Processes"),
+            (919, 931, "D2L, Ch. 20: Generative Adversarial Networks"),
         ],
     ),
 ]

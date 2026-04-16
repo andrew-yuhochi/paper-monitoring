@@ -509,9 +509,16 @@ def run_pipeline(
 
 
 def _stdout_progress(step: str, message: str) -> None:
-    """Progress callback that emits JSON lines to stdout for subprocess parsing."""
+    """Progress callback that emits JSON lines to stdout for subprocess parsing.
+
+    Silently ignores BrokenPipeError so the pipeline continues even if
+    the dashboard reader (parent process) disconnects on page refresh.
+    """
     line = _json.dumps({"type": step, "message": message})
-    print(line, flush=True)
+    try:
+        print(line, flush=True)
+    except BrokenPipeError:
+        pass
 
 
 def main() -> None:

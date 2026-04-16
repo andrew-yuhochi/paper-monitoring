@@ -267,6 +267,7 @@ class Seeder:
                 "description": concept.description,
                 "domain_tags": concept.domain_tags,
                 "seeded_from": source_label,
+                "prerequisite_concept_names": concept.prerequisite_concept_names,
             }
             self._store.upsert_node(
                 concept_node_id, "concept", concept.name, concept_props
