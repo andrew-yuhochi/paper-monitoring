@@ -20,12 +20,14 @@ from src.models.arxiv import ArxivPaper
 from src.models.classification import PaperClassification
 from src.models.graph import DigestEntry, Node, ScoredPaper
 from src.models.huggingface import HFPaper
+from src.models.classification import ExtractedConcept
 from src.services.classifier import OllamaClassifier
 from src.services.linker import ConceptLinker
 from src.services.prefilter import PreFilter
 from src.services.renderer import DigestRenderer
 from src.store.graph_store import GraphStore
 from src.utils.logging_config import setup_logging
+from src.utils.normalize import normalize_concept_name
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +295,115 @@ def _run_storage_and_rendering(
 
 
 # ---------------------------------------------------------------------------
+# Stage 4: Knowledge bank expansion (T5 survey concept extraction)
+# ---------------------------------------------------------------------------
+
+
+def _store_extracted_concepts(
+    concepts: list[ExtractedConcept],
+    paper_node_id: str,
+    store: GraphStore,
+) -> int:
+    """Create concept nodes and INTRODUCES edges for extracted concepts.
+
+    Also creates PREREQUISITE_OF edges between concepts (two-pass: only
+    targets that already exist in the graph get edges).
+
+    Returns number of new or updated concept nodes.
+    """
+    prerequisite_buffer: list[tuple[str, list[str]]] = []
+
+    for concept in concepts:
+        norm = normalize_concept_name(concept.name)
+        if not norm:
+            continue
+
+        concept_node_id = f"concept:{norm}"
+        concept_props = {
+            "description": concept.description,
+            "domain_tags": concept.domain_tags,
+            "seeded_from": "weekly_survey",
+        }
+        store.upsert_node(concept_node_id, "concept", concept.name, concept_props)
+        store.upsert_edge(paper_node_id, concept_node_id, "INTRODUCES")
+
+        if concept.prerequisite_concept_names:
+            prerequisite_buffer.append(
+                (concept_node_id, concept.prerequisite_concept_names)
+            )
+
+    # Pass 2: write prerequisite edges (targets must exist)
+    prereq_count = 0
+    for concept_node_id, prereq_names in prerequisite_buffer:
+        for prereq_name in prereq_names:
+            norm = normalize_concept_name(prereq_name)
+            if not norm:
+                continue
+            target_id = f"concept:{norm}"
+            if store.get_node(target_id) is not None:
+                store.upsert_edge(concept_node_id, target_id, "PREREQUISITE_OF")
+                prereq_count += 1
+
+    return len(concepts)
+
+
+def _run_knowledge_bank_expansion(
+    classified: list[tuple[ScoredPaper, PaperClassification]],
+    store: GraphStore,
+    cfg: Settings,
+    classifier: OllamaClassifier | None = None,
+    on_survey_processed: Callable[[int, int], None] | None = None,
+) -> int:
+    """Stage 4: extract concepts from T5 (survey) papers to expand the knowledge bank.
+
+    Only processes papers classified as tier 5 (surveys) that did not fail
+    classification. Each survey's title+abstract is run through concept
+    extraction, and new concepts are added to the graph.
+
+    Returns total number of concepts extracted across all surveys.
+    """
+    surveys = [
+        (scored, cls) for scored, cls in classified
+        if cls.tier == 5 and not cls.classification_failed
+    ]
+
+    if not surveys:
+        logger.info("Knowledge bank expansion: no T5 surveys in this run — skipping")
+        return 0
+
+    logger.info("Knowledge bank expansion: %d T5 surveys to process", len(surveys))
+    _classifier = classifier or OllamaClassifier(cfg=cfg)
+    total_concepts = 0
+
+    for n, (scored, _cls) in enumerate(surveys, start=1):
+        paper = scored.paper
+        paper_node_id = f"paper:{paper.arxiv_id}"
+        text = f"{paper.title}\n\n{paper.abstract}"
+
+        logger.info(
+            "Extracting concepts from survey %d of %d: %s",
+            n, len(surveys), paper.title,
+        )
+        concepts = _classifier.extract_concepts(text, source_id=paper_node_id)
+
+        if concepts:
+            count = _store_extracted_concepts(concepts, paper_node_id, store)
+            total_concepts += count
+            logger.info("  -> %d concepts extracted and stored", count)
+        else:
+            logger.warning("  -> no concepts extracted from survey %s", paper.arxiv_id)
+
+        if on_survey_processed:
+            on_survey_processed(n, len(surveys))
+
+    logger.info(
+        "Knowledge bank expansion complete: %d concepts from %d surveys",
+        total_concepts, len(surveys),
+    )
+    return total_concepts
+
+
+# ---------------------------------------------------------------------------
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
@@ -355,6 +466,20 @@ def run_pipeline(
         _progress("storage", "Storing results and rendering digest...")
         digest_path = _run_storage_and_rendering(classified, run_date, _store, _cfg)
         _progress("storage", f"Digest rendered at {digest_path}")
+
+        # --- Stage 4: Knowledge bank expansion (T5 surveys) ---
+        survey_count = sum(1 for _, c in classified if c.tier == 5 and not c.classification_failed)
+        if survey_count > 0:
+            _progress("expansion", f"Expanding knowledge bank from {survey_count} surveys...")
+            new_concepts = _run_knowledge_bank_expansion(
+                classified, _store, _cfg,
+                on_survey_processed=lambda n, t: _progress(
+                    "expansion", f"Extracting concepts from survey {n} of {t}"
+                ),
+            )
+            _progress("expansion", f"Knowledge bank expanded — {new_concepts} concepts extracted")
+        else:
+            _progress("expansion", "No T5 surveys this run — knowledge bank unchanged")
 
         _store.update_run(
             run_id,
