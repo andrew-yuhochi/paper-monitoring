@@ -76,14 +76,16 @@ Return a JSON object with exactly these fields:
 }}\
 """
 
-_CONCEPT_EXTRACTION_SYSTEM_PROMPT = """\
+_CONCEPT_EXTRACTION_SYSTEM_PROMPT_TEMPLATE = """\
 You are an expert ML researcher extracting foundational concepts from academic text. For each distinct concept found in the text, provide:
 - name: a concise canonical name in lowercase (e.g., "backpropagation", "attention mechanism", "variational autoencoder")
 - description: a ~200 word explanation suitable for a knowledge bank entry
 - domain_tags: list of relevant domains (e.g., ["deep learning", "optimization", "natural language processing"])
 - prerequisite_concept_names: list of other concept names (from this same extraction) that this concept depends on
 
-Focus on foundational, reusable concepts — not paper-specific results. Extract 5-15 concepts per source.
+Focus on foundational, reusable concepts — not paper-specific results.
+
+{source_guidance}
 
 Return a JSON object with exactly this structure:
 {{
@@ -98,6 +100,39 @@ Return a JSON object with exactly this structure:
   ]
 }}\
 """
+
+_SOURCE_TYPE_GUIDANCE: dict[str, str] = {
+    "landmark_paper": (
+        "This is a landmark research paper that introduced a key innovation. "
+        "Extract only the 1-3 core concepts this paper introduced or pioneered. "
+        "Do not extract background concepts that already existed before this paper."
+    ),
+    "survey_paper": (
+        "This is a survey paper that synthesizes an entire subfield. "
+        "Extract 20-40 foundational concepts covered in this survey, "
+        "including both well-established and emerging concepts. "
+        "Capture the full breadth of the field being surveyed."
+    ),
+    "weekly_survey": (
+        "This is a recent survey paper from a weekly pipeline. "
+        "Extract 15-30 foundational concepts it covers, focusing on "
+        "concepts that are reusable across papers and not specific to one result."
+    ),
+    "textbook_chapter": (
+        "This is a textbook chapter with comprehensive coverage of a topic. "
+        "Extract 30-100 concepts including definitions, methods, algorithms, "
+        "and theoretical foundations. Be thorough — textbook chapters are "
+        "the richest source of well-defined concepts with clear prerequisites."
+    ),
+    "manual_seed": (
+        "Extract 5-15 foundational concepts from this source."
+    ),
+}
+
+
+def _build_concept_extraction_prompt(source_type: str) -> str:
+    guidance = _SOURCE_TYPE_GUIDANCE.get(source_type, "Extract 5-15 concepts per source.")
+    return _CONCEPT_EXTRACTION_SYSTEM_PROMPT_TEMPLATE.format(source_guidance=guidance)
 
 
 # ---------------------------------------------------------------------------
@@ -182,12 +217,20 @@ class OllamaClassifier:
         self,
         text: str,
         source_id: str,
+        source_type: str = "manual_seed",
     ) -> list[ExtractedConcept]:
         """Extract foundational concepts from text (abstract or textbook chapter).
 
-        Used during the seeding phase only. Returns [] if OllamaClient fails.
+        Args:
+            text: The text to extract concepts from.
+            source_id: Identifier for the source (e.g., "paper:1706.03762").
+            source_type: One of "landmark_paper", "survey_paper", "weekly_survey",
+                "textbook_chapter", "manual_seed". Controls the extraction prompt
+                guidance (concept count, focus area).
+
+        Returns [] if OllamaClient fails.
         """
-        system_prompt = _CONCEPT_EXTRACTION_SYSTEM_PROMPT
+        system_prompt = _build_concept_extraction_prompt(source_type)
         user_prompt = f"Source: {source_id}\nText: {text}"
 
         result = self._client.chat(

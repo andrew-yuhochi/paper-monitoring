@@ -384,7 +384,9 @@ def _run_knowledge_bank_expansion(
             "Extracting concepts from survey %d of %d: %s",
             n, len(surveys), paper.title,
         )
-        concepts = _classifier.extract_concepts(text, source_id=paper_node_id)
+        concepts = _classifier.extract_concepts(
+            text, source_id=paper_node_id, source_type="weekly_survey",
+        )
 
         if concepts:
             count = _store_extracted_concepts(concepts, paper_node_id, store)

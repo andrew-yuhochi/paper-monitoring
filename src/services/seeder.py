@@ -73,7 +73,9 @@ class Seeder:
 
         # Extract concepts from title + abstract
         text = f"{paper.title}\n\n{paper.abstract}"
-        concepts = self._classifier.extract_concepts(text, source_id=paper_node_id)
+        concepts = self._classifier.extract_concepts(
+            text, source_id=paper_node_id, source_type=source_label,
+        )
         logger.info("  -> %d concepts extracted", len(concepts))
 
         self._store_concepts(concepts, paper_node_id, source_label)
@@ -87,7 +89,8 @@ class Seeder:
         """
         logger.info("Seeding chapter: %s", chapter.source_description)
         concepts = self._classifier.extract_concepts(
-            chapter.text, source_id=chapter.source_description
+            chapter.text, source_id=chapter.source_description,
+            source_type="textbook_chapter",
         )
         logger.info("  -> %d concepts extracted", len(concepts))
         self._store_concepts(concepts, source_node_id=None, source_label=chapter.source_description)
