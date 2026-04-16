@@ -7,8 +7,11 @@ Stages (added task by task):
 """
 from __future__ import annotations
 
+import json as _json
 import logging
+import sys
 from datetime import date
+from typing import Callable
 
 from src.config import Settings, settings as default_settings
 from src.integrations.arxiv_client import ArxivFetcher
@@ -118,6 +121,7 @@ def _run_classification(
     store: GraphStore,
     cfg: Settings,
     classifier: OllamaClassifier | None = None,
+    on_paper_classified: Callable[[int, int], None] | None = None,
 ) -> list[tuple[ScoredPaper, PaperClassification]]:
     """Stage 2: classify each candidate paper via Ollama.
 
@@ -160,6 +164,8 @@ def _run_classification(
         )
         classification = _classifier.classify_paper(scored.paper, concept_index)
         results.append((scored, classification))
+        if on_paper_classified:
+            on_paper_classified(n, total)
 
     classified_count = sum(1 for _, c in results if not c.classification_failed)
     failed_count = total - classified_count
@@ -291,9 +297,14 @@ def _run_storage_and_rendering(
 # ---------------------------------------------------------------------------
 
 
+def _noop_progress(step: str, message: str) -> None:
+    """Default no-op progress callback — zero overhead for cron path."""
+
+
 def run_pipeline(
     store: GraphStore | None = None,
     cfg: Settings | None = None,
+    progress_callback: Callable[[str, str], None] | None = None,
 ) -> None:
     """Execute the full weekly paper monitoring pipeline.
 
@@ -302,25 +313,48 @@ def run_pipeline(
                Pass an in-memory store for testing.
         cfg: Settings instance. Defaults to module-level settings loaded from
              environment / .env. Pass a mock for testing.
+        progress_callback: Optional callback ``(step, message) -> None`` called
+            at pipeline checkpoints. Used by the Streamlit dashboard to report
+            live progress. Passing ``None`` (the default) incurs zero overhead.
     """
     _cfg = cfg or default_settings
     _store = store or GraphStore(_cfg.db_path)
+    _progress = progress_callback or _noop_progress
     run_date = date.today().isoformat()
 
     run_id = _store.create_run(run_date)
     logger.info("Pipeline started — run_id=%d, run_date=%s", run_id, run_date)
+    _progress("start", f"Pipeline started — run_date={run_date}")
 
     try:
         # --- Stage 1: Ingestion ---
+        _progress("ingestion", "Fetching arXiv papers...")
         arxiv_papers, _hf_data, candidates = _run_ingestion(_store, _cfg)
+        _progress(
+            "ingestion",
+            f"Ingestion complete — {len(arxiv_papers)} fetched, {len(candidates)} candidates after pre-filter",
+        )
 
         # --- Stage 2: Classification ---
-        classified = _run_classification(candidates, _store, _cfg)
+        total = len(candidates)
+        _progress("classification", f"Classifying {total} papers...")
+        classified = _run_classification(
+            candidates, _store, _cfg,
+            on_paper_classified=lambda n, t: _progress(
+                "classification", f"Classifying paper {n} of {total}"
+            ),
+        )
         papers_classified = sum(1 for _, c in classified if not c.classification_failed)
         papers_failed = len(classified) - papers_classified
+        _progress(
+            "classification",
+            f"Classification complete — {papers_classified} classified, {papers_failed} failed",
+        )
 
         # --- Stage 3: Storage + Rendering ---
+        _progress("storage", "Storing results and rendering digest...")
         digest_path = _run_storage_and_rendering(classified, run_date, _store, _cfg)
+        _progress("storage", f"Digest rendered at {digest_path}")
 
         _store.update_run(
             run_id,
@@ -338,17 +372,30 @@ def run_pipeline(
             papers_failed,
             digest_path,
         )
+        _progress("done", f"Pipeline complete — {papers_classified} papers classified")
 
     except Exception as e:
         _store.update_run(run_id, status="failed", error_message=str(e))
         logger.exception("Pipeline failed — run_id=%d", run_id)
+        _progress("error", str(e))
         raise
 
 
+def _stdout_progress(step: str, message: str) -> None:
+    """Progress callback that emits JSON lines to stdout for subprocess parsing."""
+    line = _json.dumps({"type": step, "message": message})
+    print(line, flush=True)
+
+
 def main() -> None:
-    """CLI entry point. Configures logging then runs the pipeline."""
+    """CLI entry point. Configures logging then runs the pipeline.
+
+    Accepts ``--progress`` flag to emit JSON progress lines to stdout,
+    used by the Streamlit dashboard subprocess.
+    """
     setup_logging(log_dir=default_settings.log_dir, log_level=default_settings.log_level)
-    run_pipeline()
+    progress_cb = _stdout_progress if "--progress" in sys.argv else None
+    run_pipeline(progress_callback=progress_cb)
 
 
 if __name__ == "__main__":

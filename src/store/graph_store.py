@@ -400,6 +400,31 @@ class GraphStore:
 
         return results
 
+    def get_all_papers(self, limit: int = 500) -> list[dict]:
+        """Return all paper nodes with parsed properties, ordered by published_date DESC.
+
+        Each returned dict has keys: id, label, properties (parsed from JSON).
+        Returns [] if no paper nodes exist.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT id, label, properties
+            FROM nodes
+            WHERE node_type = 'paper'
+            ORDER BY json_extract(properties, '$.published_date') DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "label": r["label"],
+                "properties": json.loads(r["properties"]) if r["properties"] else {},
+            }
+            for r in rows
+        ]
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

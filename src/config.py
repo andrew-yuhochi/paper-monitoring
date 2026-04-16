@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # --- Logging ---
     log_level: str = "INFO"
 
-    model_config = {"env_file": ".env", "env_prefix": "PM_"}
+    model_config = {"env_file": ".env", "env_prefix": "PM_", "extra": "ignore"}
 
 
 settings = Settings()
