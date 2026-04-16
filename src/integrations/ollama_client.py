@@ -58,7 +58,7 @@ class OllamaClient:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": current_user_prompt},
                     ],
-                    format="json",
+                    format=response_model.model_json_schema(),
                 )
                 raw_response = response.message.content
                 data = json.loads(raw_response)

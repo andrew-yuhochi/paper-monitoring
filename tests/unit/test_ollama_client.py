@@ -151,8 +151,8 @@ def test_chat_propagates_unexpected_response_error(mock_client_class: MagicMock)
 
 
 @patch("src.integrations.ollama_client.ollama.Client")
-def test_chat_passes_format_json(mock_client_class: MagicMock) -> None:
-    """The ollama.Client.chat call always includes format='json'."""
+def test_chat_passes_format_json_schema(mock_client_class: MagicMock) -> None:
+    """The ollama.Client.chat call includes the response model's JSON schema as format."""
     mock_instance = MagicMock()
     mock_client_class.return_value = mock_instance
     mock_instance.chat.return_value = _make_response('{"value": 1, "label": "x"}')
@@ -161,7 +161,7 @@ def test_chat_passes_format_json(mock_client_class: MagicMock) -> None:
     client.chat("sys", "usr", _SimpleModel)
 
     call_kwargs = mock_instance.chat.call_args.kwargs
-    assert call_kwargs.get("format") == "json"
+    assert call_kwargs.get("format") == _SimpleModel.model_json_schema()
 
 
 @patch("src.integrations.ollama_client.ollama.Client")

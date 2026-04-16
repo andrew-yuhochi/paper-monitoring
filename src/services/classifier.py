@@ -119,10 +119,10 @@ _SOURCE_TYPE_GUIDANCE: dict[str, str] = {
         "concepts that are reusable across papers and not specific to one result."
     ),
     "textbook_chapter": (
-        "This is a textbook chapter with comprehensive coverage of a topic. "
-        "Extract 30-100 concepts including definitions, methods, algorithms, "
-        "and theoretical foundations. Be thorough — textbook chapters are "
-        "the richest source of well-defined concepts with clear prerequisites."
+        "This is a section from a textbook chapter. "
+        "Extract 5-15 foundational concepts including definitions, "
+        "methods, algorithms, and theoretical foundations. Focus on the core "
+        "concepts that other work builds upon."
     ),
     "manual_seed": (
         "Extract 5-15 foundational concepts from this source."

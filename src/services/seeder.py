@@ -81,20 +81,37 @@ class Seeder:
         self._store_concepts(concepts, paper_node_id, source_label)
         return len(concepts)
 
-    def seed_chapter(self, chapter: ChapterText) -> int:
+    def seed_chapter(self, chapter: ChapterText, chunk_size: int = 3000) -> int:
         """Seed a textbook chapter: extract+store concepts.
 
-        Returns number of concepts extracted.
-        Does not create a paper node — textbook chapters are anonymous sources.
+        Long chapters are split into chunks of ``chunk_size`` words to avoid
+        overwhelming the LLM with too much input (which causes schema errors).
+        Concepts from all chunks are merged; duplicates are handled by upsert.
+
+        Returns total number of concepts extracted across all chunks.
         """
         logger.info("Seeding chapter: %s", chapter.source_description)
-        concepts = self._classifier.extract_concepts(
-            chapter.text, source_id=chapter.source_description,
-            source_type="textbook_chapter",
-        )
-        logger.info("  -> %d concepts extracted", len(concepts))
-        self._store_concepts(concepts, source_node_id=None, source_label=chapter.source_description)
-        return len(concepts)
+        words = chapter.text.split()
+        chunks = [
+            " ".join(words[i : i + chunk_size])
+            for i in range(0, len(words), chunk_size)
+        ]
+        logger.info("  Split into %d chunks (%d words total)", len(chunks), len(words))
+
+        all_concepts: list[ExtractedConcept] = []
+        for idx, chunk in enumerate(chunks, start=1):
+            logger.info("  Extracting from chunk %d of %d...", idx, len(chunks))
+            concepts = self._classifier.extract_concepts(
+                chunk,
+                source_id=f"{chapter.source_description} (chunk {idx}/{len(chunks)})",
+                source_type="textbook_chapter",
+            )
+            all_concepts.extend(concepts)
+            logger.info("    -> %d concepts from chunk %d", len(concepts), idx)
+
+        logger.info("  -> %d total concepts extracted", len(all_concepts))
+        self._store_concepts(all_concepts, source_node_id=None, source_label=chapter.source_description)
+        return len(all_concepts)
 
     def flush_prerequisites(self) -> int:
         """Pass 2: write all buffered PREREQUISITE_OF edges.
