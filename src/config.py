@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # --- Ollama ---
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
-    ollama_timeout: int = 60
+    ollama_timeout: int = 300
     ollama_max_retries: int = 3
 
     # --- arXiv ---
