@@ -17,10 +17,16 @@ import threading
 import time
 from pathlib import Path
 
-import streamlit as st
+# Ensure the project root is on sys.path so `src.*` imports resolve
+# regardless of the working directory Streamlit uses.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.config import settings as default_settings
-from src.store.graph_store import GraphStore
+import streamlit as st  # noqa: E402
+
+from src.config import settings as default_settings  # noqa: E402
+from src.store.graph_store import GraphStore  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config (must be first Streamlit call)
@@ -32,7 +38,6 @@ st.set_page_config(page_title="Paper Monitoring", layout="wide")
 # Constants
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _VENV_PYTHON = _PROJECT_ROOT / ".venv" / "bin" / "python"
 _PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
 
