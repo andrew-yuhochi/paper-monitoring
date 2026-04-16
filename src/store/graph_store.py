@@ -401,9 +401,10 @@ class GraphStore:
         return results
 
     def get_all_papers(self, limit: int = 500) -> list[dict]:
-        """Return all paper nodes with parsed properties, ordered by published_date DESC.
+        """Return all paper nodes with parsed properties and linked concepts.
 
-        Each returned dict has keys: id, label, properties (parsed from JSON).
+        Sorted by run_date DESC, tier ASC, hf_upvotes DESC.
+        Each returned dict has keys: id, label, properties, linked_concepts.
         Returns [] if no paper nodes exist.
         """
         rows = self._conn.execute(
@@ -411,19 +412,40 @@ class GraphStore:
             SELECT id, label, properties
             FROM nodes
             WHERE node_type = 'paper'
-            ORDER BY json_extract(properties, '$.published_date') DESC
+            ORDER BY
+                json_extract(properties, '$.run_date') DESC,
+                json_extract(properties, '$.tier') ASC,
+                json_extract(properties, '$.hf_upvotes') DESC
             LIMIT ?
             """,
             (limit,),
         ).fetchall()
-        return [
-            {
-                "id": r["id"],
+
+        results = []
+        for r in rows:
+            paper_id = r["id"]
+            props = json.loads(r["properties"]) if r["properties"] else {}
+
+            # Fetch linked concepts via BUILDS_ON edges
+            concept_rows = self._conn.execute(
+                """
+                SELECT cn.label FROM edges e
+                JOIN nodes cn ON e.target_id = cn.id
+                WHERE e.source_id = ?
+                  AND e.relationship_type = 'BUILDS_ON'
+                  AND cn.node_type = 'concept'
+                """,
+                (paper_id,),
+            ).fetchall()
+
+            results.append({
+                "id": paper_id,
                 "label": r["label"],
-                "properties": json.loads(r["properties"]) if r["properties"] else {},
-            }
-            for r in rows
-        ]
+                "properties": props,
+                "linked_concepts": [cr["label"] for cr in concept_rows],
+            })
+
+        return results
 
     def get_all_concepts(self) -> list[dict]:
         """Return all concept nodes with source papers and prerequisites.

@@ -212,34 +212,28 @@ with tab_papers:
         if not filtered:
             st.warning("No papers match the selected tiers.")
         else:
-            rows = []
             for p in filtered:
                 props = p["properties"]
                 tier = props.get("tier")
                 tier_label = f"T{tier}" if tier is not None else "FAILED"
-                authors = props.get("authors", [])
-                first_author = authors[0] if authors else ""
-                if len(authors) > 1:
-                    first_author += " et al."
+                summary = props.get("summary", "No summary available.")
+                contributions = props.get("key_contributions", [])
+                concepts = p.get("linked_concepts", [])
+                arxiv_url = props.get("arxiv_url", "")
 
-                rows.append({
-                    "Tier": tier_label,
-                    "Title": p["label"][:80] + ("..." if len(p["label"]) > 80 else ""),
-                    "Authors": first_author,
-                    "Published": props.get("published_date", ""),
-                    "Category": props.get("primary_category", ""),
-                    "HF Upvotes": props.get("hf_upvotes", 0),
-                    "Confidence": props.get("confidence", ""),
-                    "arXiv": props.get("arxiv_url", ""),
-                })
-
-            st.dataframe(
-                rows,
-                use_container_width=True,
-                column_config={
-                    "arXiv": st.column_config.LinkColumn("arXiv"),
-                },
-            )
+                with st.container(border=True):
+                    col_tier, col_content = st.columns([1, 12])
+                    with col_tier:
+                        st.markdown(f"### {tier_label}")
+                    with col_content:
+                        st.markdown(f"**{p['label']}**")
+                        st.write(summary)
+                        if contributions:
+                            st.markdown("**Key contributions:** " + " | ".join(contributions))
+                        if concepts:
+                            st.markdown("**Related concepts:** " + ", ".join(f"`{c}`" for c in concepts))
+                        if arxiv_url:
+                            st.markdown(f"[arXiv]({arxiv_url})")
 
 # ---------------------------------------------------------------------------
 # Tab 2: Knowledge Bank (concepts)
