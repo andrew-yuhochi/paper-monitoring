@@ -1,9 +1,8 @@
 """Paper Monitoring — Streamlit Dashboard.
 
-Single-page app that displays classified papers from the SQLite graph store
-and provides a "Run Weekly Update" button that launches the pipeline as a
-subprocess.  The subprocess approach ensures the pipeline survives if the
-browser tab is accidentally refreshed or the Streamlit script reruns.
+Single-page app with two tabs:
+  1. Classified Papers — weekly pipeline results (seed papers hidden)
+  2. Knowledge Bank — foundational concepts with sources and prerequisites
 
 Launch:  streamlit run src/dashboard/app.py
 """
@@ -41,15 +40,6 @@ st.set_page_config(page_title="Paper Monitoring", layout="wide")
 _VENV_PYTHON = _PROJECT_ROOT / ".venv" / "bin" / "python"
 _PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
 
-TIER_COLORS: dict[int | None, str] = {
-    1: "#B8860B",   # gold
-    2: "#808080",   # silver
-    3: "#2196F3",   # blue
-    4: "#9E9E9E",   # gray
-    5: "#4CAF50",   # green
-    None: "#e57373",  # red — classification failed
-}
-
 
 # ---------------------------------------------------------------------------
 # Session-state initialisation
@@ -57,10 +47,10 @@ TIER_COLORS: dict[int | None, str] = {
 
 if "running" not in st.session_state:
     st.session_state.running = False
-    st.session_state.process = None          # subprocess.Popen
+    st.session_state.process = None
     st.session_state.event_queue = queue.Queue()
     st.session_state.progress_log: list[str] = []
-    st.session_state.final_status = None     # "done" | "error" | None
+    st.session_state.final_status = None
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +70,6 @@ def _reader_thread(proc: subprocess.Popen, q: queue.Queue) -> None:
         except json.JSONDecodeError:
             event = {"type": "progress", "message": line}
         q.put(event)
-    # Process has exited — check return code
     proc.wait()
     if proc.returncode != 0 and q.empty():
         stderr_text = proc.stderr.read() if proc.stderr else ""
@@ -114,10 +103,8 @@ def _drain_events() -> None:
             event = st.session_state.event_queue.get_nowait()
         except queue.Empty:
             break
-
         etype = event.get("type", "progress")
         msg = event.get("message", "")
-
         if etype == "done":
             st.session_state.final_status = "done"
             st.session_state.running = False
@@ -130,16 +117,8 @@ def _drain_events() -> None:
             st.session_state.progress_log.append(msg)
 
 
-def _is_still_running() -> bool:
-    """Check whether the subprocess is still alive."""
-    proc = st.session_state.process
-    if proc is None:
-        return False
-    return proc.poll() is None
-
-
 # ---------------------------------------------------------------------------
-# Header
+# Header + run button
 # ---------------------------------------------------------------------------
 
 st.title("Paper Monitoring")
@@ -155,10 +134,6 @@ if latest_run is not None:
         f"status: **{latest_run.status}**"
     )
 
-# ---------------------------------------------------------------------------
-# Run button + progress
-# ---------------------------------------------------------------------------
-
 col_btn, col_status = st.columns([1, 3])
 
 with col_btn:
@@ -169,7 +144,6 @@ with col_btn:
         _start_pipeline()
         st.rerun()
 
-# While running, drain events and auto-refresh
 if st.session_state.running:
     _drain_events()
     with col_status:
@@ -178,13 +152,11 @@ if st.session_state.running:
         with st.expander("Progress", expanded=True):
             for line in st.session_state.progress_log:
                 st.text(line)
-    # Auto-refresh every 2 seconds to pick up new progress
     time.sleep(2)
     st.rerun()
 
-# Show final status after completion
 if st.session_state.final_status == "done":
-    _drain_events()  # catch any trailing events
+    _drain_events()
     st.success(
         f"Pipeline complete! {st.session_state.progress_log[-1] if st.session_state.progress_log else ''}"
     )
@@ -192,8 +164,7 @@ if st.session_state.final_status == "done":
         with st.expander("Run log"):
             for line in st.session_state.progress_log:
                 st.text(line)
-    st.session_state.final_status = None  # clear after displaying
-
+    st.session_state.final_status = None
 elif st.session_state.final_status == "error":
     _drain_events()
     st.error("Pipeline failed.")
@@ -204,66 +175,111 @@ elif st.session_state.final_status == "error":
     st.session_state.final_status = None
 
 # ---------------------------------------------------------------------------
-# Tier filter
+# Tabs: Classified Papers | Knowledge Bank
 # ---------------------------------------------------------------------------
 
-st.subheader("Classified Papers")
-
-tier_options = ["T1", "T2", "T3", "T4", "T5", "Failed"]
-selected_tiers = st.multiselect("Filter by tier", tier_options, default=tier_options)
-
-# Map selection back to int|None for filtering
-_tier_map: dict[str, int | None] = {
-    "T1": 1, "T2": 2, "T3": 3, "T4": 4, "T5": 5, "Failed": None,
-}
-active_tiers = {_tier_map[t] for t in selected_tiers}
+tab_papers, tab_concepts = st.tabs(["Classified Papers", "Knowledge Bank"])
 
 # ---------------------------------------------------------------------------
-# Paper table
+# Tab 1: Classified Papers (seed papers hidden)
 # ---------------------------------------------------------------------------
 
-papers = store.get_all_papers(limit=500)
+with tab_papers:
+    all_papers = store.get_all_papers(limit=500)
 
-if not papers:
-    st.info("No papers classified yet. Click **Run Weekly Update** to get started.")
-else:
-    # Filter by tier
-    filtered = [
-        p for p in papers
-        if p["properties"].get("tier") in active_tiers
+    # Only show papers from the weekly pipeline (have run_date in properties).
+    # Seed papers don't have run_date — they're knowledge bank sources, not digest entries.
+    pipeline_papers = [
+        p for p in all_papers
+        if "run_date" in p["properties"]
     ]
 
-    if not filtered:
-        st.warning("No papers match the selected tiers.")
+    if not pipeline_papers:
+        st.info("No papers classified yet. Click **Run Weekly Update** to get started.")
     else:
-        rows = []
-        for p in filtered:
-            props = p["properties"]
-            tier = props.get("tier")
-            tier_label = f"T{tier}" if tier is not None else "FAILED"
-            authors = props.get("authors", [])
-            first_author = authors[0] if authors else ""
-            if len(authors) > 1:
-                first_author += " et al."
+        tier_options = ["T1", "T2", "T3", "T4", "T5", "Failed"]
+        selected_tiers = st.multiselect("Filter by tier", tier_options, default=tier_options)
+        _tier_map: dict[str, int | None] = {
+            "T1": 1, "T2": 2, "T3": 3, "T4": 4, "T5": 5, "Failed": None,
+        }
+        active_tiers = {_tier_map[t] for t in selected_tiers}
 
-            rows.append({
-                "Tier": tier_label,
-                "Title": p["label"][:80] + ("..." if len(p["label"]) > 80 else ""),
-                "Authors": first_author,
-                "Published": props.get("published_date", ""),
-                "Category": props.get("primary_category", ""),
-                "HF Upvotes": props.get("hf_upvotes", 0),
-                "Confidence": props.get("confidence", ""),
-                "arXiv": props.get("arxiv_url", ""),
-            })
+        filtered = [
+            p for p in pipeline_papers
+            if p["properties"].get("tier") in active_tiers
+        ]
 
-        st.dataframe(
-            rows,
-            use_container_width=True,
-            column_config={
-                "arXiv": st.column_config.LinkColumn("arXiv"),
-            },
-        )
+        if not filtered:
+            st.warning("No papers match the selected tiers.")
+        else:
+            rows = []
+            for p in filtered:
+                props = p["properties"]
+                tier = props.get("tier")
+                tier_label = f"T{tier}" if tier is not None else "FAILED"
+                authors = props.get("authors", [])
+                first_author = authors[0] if authors else ""
+                if len(authors) > 1:
+                    first_author += " et al."
+
+                rows.append({
+                    "Tier": tier_label,
+                    "Title": p["label"][:80] + ("..." if len(p["label"]) > 80 else ""),
+                    "Authors": first_author,
+                    "Published": props.get("published_date", ""),
+                    "Category": props.get("primary_category", ""),
+                    "HF Upvotes": props.get("hf_upvotes", 0),
+                    "Confidence": props.get("confidence", ""),
+                    "arXiv": props.get("arxiv_url", ""),
+                })
+
+            st.dataframe(
+                rows,
+                use_container_width=True,
+                column_config={
+                    "arXiv": st.column_config.LinkColumn("arXiv"),
+                },
+            )
+
+# ---------------------------------------------------------------------------
+# Tab 2: Knowledge Bank (concepts)
+# ---------------------------------------------------------------------------
+
+with tab_concepts:
+    concepts = store.get_all_concepts()
+
+    if not concepts:
+        st.info("Knowledge bank is empty. Run the seed pipeline first: `python -m src.seed`")
+    else:
+        st.metric("Total concepts", len(concepts))
+
+        search = st.text_input("Search concepts", placeholder="e.g. attention, transformer, backpropagation")
+
+        display = concepts
+        if search:
+            query = search.lower()
+            display = [
+                c for c in concepts
+                if query in c["label"].lower()
+                or query in c["properties"].get("description", "").lower()
+            ]
+
+        if not display:
+            st.warning(f"No concepts match '{search}'.")
+        else:
+            for c in display:
+                props = c["properties"]
+                desc = props.get("description", "No description.")
+                tags = props.get("domain_tags", [])
+                sources = c["source_papers"]
+                prereqs = c["prerequisites"]
+
+                with st.expander(f"**{c['label']}**  {'  '.join(f'`{t}`' for t in tags)}"):
+                    st.write(desc)
+                    if sources:
+                        st.caption(f"Source papers: {', '.join(sources)}")
+                    if prereqs:
+                        st.caption(f"Prerequisites: {', '.join(prereqs)}")
 
 # ---------------------------------------------------------------------------
 # Footer

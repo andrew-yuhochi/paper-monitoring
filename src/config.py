@@ -24,13 +24,13 @@ class Settings(BaseSettings):
     arxiv_categories: list[str] = ["cs.LG", "cs.AI", "cs.CL", "cs.CV", "stat.ML"]
     arxiv_fetch_delay: float = 3.0
     arxiv_max_results_per_category: int = 500
-    arxiv_lookback_days: int = 7
+    arxiv_lookback_days: int = 30
 
     # --- HuggingFace ---
     hf_fetch_delay: float = 1.0
 
     # --- Pre-filter ---
-    prefilter_top_n: int = 100
+    prefilter_top_n: int = 30
     prefilter_upvote_weight: float = 2.0
     prefilter_category_priorities: dict[str, int] = {
         "cs.LG": 5,

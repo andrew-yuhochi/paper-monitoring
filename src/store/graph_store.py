@@ -425,6 +425,58 @@ class GraphStore:
             for r in rows
         ]
 
+    def get_all_concepts(self) -> list[dict]:
+        """Return all concept nodes with source papers and prerequisites.
+
+        Each returned dict has keys:
+          - id, label, properties (description, domain_tags, seeded_from)
+          - source_papers: list of paper labels that INTRODUCES this concept
+          - prerequisites: list of concept labels this concept depends on
+        """
+        rows = self._conn.execute(
+            """
+            SELECT id, label, properties
+            FROM nodes
+            WHERE node_type = 'concept'
+            ORDER BY label
+            """
+        ).fetchall()
+
+        results = []
+        for row in rows:
+            concept_id = row["id"]
+            props = json.loads(row["properties"]) if row["properties"] else {}
+
+            # Papers that INTRODUCES this concept (paper → concept)
+            source_rows = self._conn.execute(
+                """
+                SELECT n.label FROM edges e
+                JOIN nodes n ON e.source_id = n.id
+                WHERE e.target_id = ? AND e.relationship_type = 'INTRODUCES'
+                """,
+                (concept_id,),
+            ).fetchall()
+
+            # Concepts this one depends on (this → prerequisite via PREREQUISITE_OF)
+            prereq_rows = self._conn.execute(
+                """
+                SELECT n.label FROM edges e
+                JOIN nodes n ON e.target_id = n.id
+                WHERE e.source_id = ? AND e.relationship_type = 'PREREQUISITE_OF'
+                """,
+                (concept_id,),
+            ).fetchall()
+
+            results.append({
+                "id": concept_id,
+                "label": row["label"],
+                "properties": props,
+                "source_papers": [r["label"] for r in source_rows],
+                "prerequisites": [r["label"] for r in prereq_rows],
+            })
+
+        return results
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
