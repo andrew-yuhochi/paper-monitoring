@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 # Ensure the project root is on sys.path so `src.*` imports resolve
@@ -189,9 +190,12 @@ with tab_papers:
 
     # Only show papers from the weekly pipeline (have run_date in properties).
     # Seed papers don't have run_date — they're knowledge bank sources, not digest entries.
+    # Default: last 30 days only.
+    cutoff = (date.today() - timedelta(days=30)).isoformat()
     pipeline_papers = [
         p for p in all_papers
         if "run_date" in p["properties"]
+        and p["properties"].get("run_date", "") >= cutoff
     ]
 
     if not pipeline_papers:
