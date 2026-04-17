@@ -11,6 +11,7 @@ class Node(BaseModel):
     node_type: str
     label: str
     properties: dict = {}
+    edited_by: str = "llm"  # "llm" or "user" — provenance tracking
 
 
 class Edge(BaseModel):
@@ -19,6 +20,7 @@ class Edge(BaseModel):
     relationship_type: str
     weight: float = 1.0
     properties: dict = {}
+    edited_by: str = "llm"  # "llm" or "user" — provenance tracking
 
 
 class ScoredPaper(BaseModel):
@@ -38,6 +40,18 @@ class WeeklyRun(BaseModel):
     digest_path: str | None = None
     status: str = "running"
     error_message: str | None = None
+
+
+class AnalysisLinks(BaseModel):
+    """Summary of nodes and edges created from a PaperAnalysis."""
+    problem_node_id: str | None = None
+    technique_node_id: str | None = None
+    paper_node_id: str
+    concepts_linked: int = 0
+    baselines_linked: int = 0
+    alternatives_linked: int = 0
+    problem_is_new: bool = False
+    technique_is_new: bool = False
 
 
 class DigestEntry(BaseModel):
