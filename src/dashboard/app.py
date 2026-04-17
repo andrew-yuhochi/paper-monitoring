@@ -3,13 +3,14 @@
 Single-page app with three tabs:
   1. Classified Papers — weekly pipeline results (seed papers hidden)
   2. Knowledge Bank — foundational concepts with sources and prerequisites
-  3. Graph — interactive knowledge graph visualization
+  3. Graph — interactive, editable knowledge graph visualization
 
 Launch:  streamlit run src/dashboard/app.py
 """
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import subprocess
 import sys
@@ -32,6 +33,9 @@ from streamlit_agraph import agraph  # noqa: E402
 
 from src.config import settings as default_settings  # noqa: E402
 from src.store.graph_store import GraphStore  # noqa: E402
+from src.utils.normalize import normalize_concept_name  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Page config (must be first Streamlit call)
@@ -74,6 +78,17 @@ _EDGE_COLORS: dict[str, str] = {
     "BELONGS_TO": "#BDC3C7",
 }
 
+_ALL_RELATIONSHIP_TYPES = list(_EDGE_COLORS.keys())
+
+# Property fields by node type (for the editing form)
+_NODE_PROPERTY_FIELDS: dict[str, list[str]] = {
+    "problem": ["description"],
+    "technique": ["approach", "innovation_type", "practical_relevance", "limitations"],
+    "concept": ["description", "domain_tags"],
+    "category": ["description"],
+    "paper": ["description"],
+}
+
 
 # ---------------------------------------------------------------------------
 # Session-state initialisation
@@ -88,6 +103,8 @@ if "running" not in st.session_state:
 
 if "graph_center_node" not in st.session_state:
     st.session_state.graph_center_node = None
+if "confirm_delete_node" not in st.session_state:
+    st.session_state.confirm_delete_node = False
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +344,7 @@ with tab_concepts:
                         st.caption(f"Prerequisites: {', '.join(prereqs)}")
 
 # ---------------------------------------------------------------------------
-# Tab 3: Graph — interactive knowledge graph visualization
+# Tab 3: Graph — interactive, editable knowledge graph visualization
 # ---------------------------------------------------------------------------
 
 with tab_graph:
@@ -338,7 +355,6 @@ with tab_graph:
     visible_types: set[str] = set()
     for i, ntype in enumerate(type_labels):
         with filter_cols[i]:
-            color_dot = f'<span style="color:{_NODE_COLORS[ntype]}">&#9679;</span>'
             if st.checkbox(
                 f"{ntype.capitalize()}",
                 value=True,
@@ -360,127 +376,315 @@ with tab_graph:
         for n in nodes_of_type:
             all_nodes_by_type[f"{n.label} ({ntype})"] = n.id
 
-    if not all_nodes_by_type:
-        st.info("No nodes in the knowledge bank yet. Run the seed pipeline or add nodes manually.")
-    else:
-        # Build select options sorted alphabetically
-        node_options = sorted(all_nodes_by_type.keys())
+    # Even when the graph is empty, show the "Add Node" form
+    graph_col, edit_col = st.columns([3, 1])
 
-        # Determine the current center
-        center_node_id = st.session_state.graph_center_node
-        # Find the display label for the current center
-        center_label = None
-        for label, nid in all_nodes_by_type.items():
-            if nid == center_node_id:
-                center_label = label
-                break
+    with graph_col:
+        if not all_nodes_by_type:
+            st.info("No nodes in the knowledge bank yet. Use the editing panel to add nodes.")
+        else:
+            # Build select options sorted alphabetically
+            node_options = sorted(all_nodes_by_type.keys())
 
-        selected_label = st.selectbox(
-            "Center on node",
-            options=node_options,
-            index=node_options.index(center_label) if center_label in node_options else 0,
-            key="graph_node_selector",
-        )
-        center_node_id = all_nodes_by_type.get(selected_label)
+            # Determine the current center
+            center_node_id = st.session_state.graph_center_node
+            center_label = None
+            for label, nid in all_nodes_by_type.items():
+                if nid == center_node_id:
+                    center_label = label
+                    break
 
-        if center_node_id:
-            st.session_state.graph_center_node = center_node_id
+            selected_label = st.selectbox(
+                "Center on node",
+                options=node_options,
+                index=node_options.index(center_label) if center_label in node_options else 0,
+                key="graph_node_selector",
+            )
+            center_node_id = all_nodes_by_type.get(selected_label)
 
-            # Fetch neighborhood
-            neighborhood = store.get_node_neighborhood(center_node_id, depth=1)
-            graph_nodes = neighborhood["nodes"]
-            graph_edges = neighborhood["edges"]
+            if center_node_id:
+                st.session_state.graph_center_node = center_node_id
 
-            # Filter nodes by visible types
-            graph_nodes = [n for n in graph_nodes if n["node_type"] in visible_types]
-            visible_node_ids = {n["id"] for n in graph_nodes}
+                # Fetch neighborhood
+                neighborhood = store.get_node_neighborhood(center_node_id, depth=1)
+                graph_nodes = neighborhood["nodes"]
+                graph_edges = neighborhood["edges"]
 
-            # Filter edges to only connect visible nodes
-            graph_edges = [
-                e for e in graph_edges
-                if e["source_id"] in visible_node_ids and e["target_id"] in visible_node_ids
-            ]
+                # Filter nodes by visible types
+                graph_nodes = [n for n in graph_nodes if n["node_type"] in visible_types]
+                visible_node_ids = {n["id"] for n in graph_nodes}
 
-            if not graph_nodes:
-                st.warning("No visible nodes after filtering. Try enabling more node types.")
-            else:
-                # Build streamlit-agraph nodes
-                agraph_nodes = []
-                for n in graph_nodes:
-                    ntype = n["node_type"]
-                    is_center = n["id"] == center_node_id
-                    agraph_nodes.append(
-                        AgraphNode(
-                            id=n["id"],
-                            label=n["label"],
-                            color=_NODE_COLORS.get(ntype, "#CCCCCC"),
-                            size=_NODE_SIZES.get(ntype, 20) + (8 if is_center else 0),
-                            title=f"[{ntype}] {n['label']}",
-                            shape="dot",
+                # Filter edges to only connect visible nodes
+                graph_edges = [
+                    e for e in graph_edges
+                    if e["source_id"] in visible_node_ids and e["target_id"] in visible_node_ids
+                ]
+
+                if not graph_nodes:
+                    st.warning("No visible nodes after filtering. Try enabling more node types.")
+                else:
+                    # Build streamlit-agraph nodes
+                    agraph_nodes = []
+                    for n in graph_nodes:
+                        ntype = n["node_type"]
+                        is_center = n["id"] == center_node_id
+                        edited_by = n.get("properties", {}).get("edited_by", "llm")
+                        # Solid border for user-edited, dashed for LLM
+                        border_width = 3 if is_center else 1
+                        agraph_nodes.append(
+                            AgraphNode(
+                                id=n["id"],
+                                label=n["label"],
+                                color=_NODE_COLORS.get(ntype, "#CCCCCC"),
+                                size=_NODE_SIZES.get(ntype, 20) + (8 if is_center else 0),
+                                title=f"[{ntype}] {n['label']}\nedited by: {edited_by}",
+                                shape="dot",
+                                borderWidth=border_width,
+                                borderWidthSelected=3,
+                            )
                         )
+
+                    # Build streamlit-agraph edges
+                    agraph_edges = []
+                    for e in graph_edges:
+                        rtype = e["relationship_type"]
+                        agraph_edges.append(
+                            AgraphEdge(
+                                source=e["source_id"],
+                                target=e["target_id"],
+                                label=rtype,
+                                color=_EDGE_COLORS.get(rtype, "#CCCCCC"),
+                            )
+                        )
+
+                    # Render graph
+                    config = AgraphConfig(
+                        height=600,
+                        width=900,
+                        directed=True,
+                        physics=True,
+                        hierarchical=False,
                     )
 
-                # Build streamlit-agraph edges
-                agraph_edges = []
-                for e in graph_edges:
-                    rtype = e["relationship_type"]
-                    agraph_edges.append(
-                        AgraphEdge(
-                            source=e["source_id"],
-                            target=e["target_id"],
-                            label=rtype,
-                            color=_EDGE_COLORS.get(rtype, "#CCCCCC"),
-                        )
+                    clicked_node = agraph(
+                        nodes=agraph_nodes,
+                        edges=agraph_edges,
+                        config=config,
                     )
 
-                # Render graph
-                config = AgraphConfig(
-                    height=600,
-                    width=900,
-                    directed=True,
-                    physics=True,
-                    hierarchical=False,
-                )
+                    # Handle click to re-center
+                    if clicked_node and clicked_node != center_node_id:
+                        st.session_state.graph_center_node = clicked_node
+                        st.rerun()
 
-                clicked_node = agraph(
-                    nodes=agraph_nodes,
-                    edges=agraph_edges,
-                    config=config,
-                )
+    # --- Editing panel (right column) ---
+    with edit_col:
+        st.markdown("#### Edit Graph")
 
-                # Handle click to re-center
-                if clicked_node and clicked_node != center_node_id:
-                    st.session_state.graph_center_node = clicked_node
+        # =====================================================================
+        # ADD NODE
+        # =====================================================================
+        with st.expander("Add Node", expanded=False):
+            new_node_type = st.selectbox(
+                "Type",
+                options=type_labels,
+                key="add_node_type",
+            )
+            new_node_label = st.text_input("Label", key="add_node_label")
+
+            # Type-specific property fields
+            new_props: dict = {}
+            fields = _NODE_PROPERTY_FIELDS.get(new_node_type, ["description"])
+            for field in fields:
+                if field == "domain_tags":
+                    val = st.text_input(
+                        "Domain tags (comma-separated)",
+                        key=f"add_node_{field}",
+                    )
+                    if val.strip():
+                        new_props[field] = [t.strip() for t in val.split(",") if t.strip()]
+                elif field == "innovation_type":
+                    new_props[field] = st.selectbox(
+                        "Innovation type",
+                        options=["architecture", "problem_framing", "loss_trick",
+                                 "eval_methodology", "dataset", "training_technique"],
+                        key=f"add_node_{field}",
+                    )
+                else:
+                    val = st.text_area(field.replace("_", " ").capitalize(), key=f"add_node_{field}", height=68)
+                    if val.strip():
+                        new_props[field] = val.strip()
+
+            if st.button("Create Node", key="btn_add_node", disabled=not new_node_label.strip()):
+                label = new_node_label.strip()
+                node_id = f"{new_node_type}:{normalize_concept_name(label)}"
+                new_props["edited_by"] = "user"
+                try:
+                    store.add_node(node_id, new_node_type, label, new_props)
+                    logger.info("User created node %s (%s)", node_id, new_node_type)
+                    st.session_state.graph_center_node = node_id
                     st.rerun()
+                except ValueError:
+                    st.error(f"Node `{node_id}` already exists.")
 
-                # --- Node details panel ---
-                center = store.get_node(center_node_id)
-                if center:
-                    st.markdown("---")
-                    st.markdown(f"**Selected: {center.label}** ({center.node_type})")
-                    props = center.properties
-                    if props.get("description"):
-                        st.write(props["description"])
-                    if props.get("approach"):
-                        st.write(f"**Approach:** {props['approach']}")
-                    if props.get("domain_tags"):
-                        st.write("**Tags:** " + ", ".join(f"`{t}`" for t in props["domain_tags"]))
-                    if props.get("edited_by"):
-                        st.caption(f"Edited by: {props['edited_by']}")
+        # =====================================================================
+        # ADD EDGE
+        # =====================================================================
+        with st.expander("Add Edge", expanded=False):
+            # Build a list of all nodes for source/target selection
+            all_node_labels_for_edges: dict[str, str] = {}
+            for ntype in type_labels:
+                for n in store.get_nodes_by_type(ntype):
+                    all_node_labels_for_edges[f"{n.label} ({ntype})"] = n.id
 
-                    # Show connected edges
-                    edges_from = store.get_edges_from(center_node_id)
-                    edges_to = store.get_edges_to(center_node_id)
-                    if edges_from or edges_to:
-                        with st.expander(f"Connections ({len(edges_from) + len(edges_to)})"):
-                            for e in edges_from:
-                                target = store.get_node(e.target_id)
-                                target_label = target.label if target else e.target_id
-                                st.text(f"  -> [{e.relationship_type}] -> {target_label}")
-                            for e in edges_to:
-                                source = store.get_node(e.source_id)
-                                source_label = source.label if source else e.source_id
-                                st.text(f"  <- [{e.relationship_type}] <- {source_label}")
+            if len(all_node_labels_for_edges) < 2:
+                st.caption("Need at least 2 nodes to create an edge.")
+            else:
+                edge_node_options = sorted(all_node_labels_for_edges.keys())
+                edge_source_label = st.selectbox("Source", options=edge_node_options, key="add_edge_source")
+                edge_target_label = st.selectbox("Target", options=edge_node_options, key="add_edge_target")
+                edge_rel_type = st.selectbox("Relationship", options=_ALL_RELATIONSHIP_TYPES, key="add_edge_rel")
+
+                source_id = all_node_labels_for_edges.get(edge_source_label, "")
+                target_id = all_node_labels_for_edges.get(edge_target_label, "")
+
+                if st.button("Create Edge", key="btn_add_edge", disabled=(source_id == target_id)):
+                    try:
+                        store.add_edge(
+                            source_id, target_id, edge_rel_type,
+                            properties={"edited_by": "user"},
+                        )
+                        logger.info(
+                            "User created edge %s -[%s]-> %s",
+                            source_id, edge_rel_type, target_id,
+                        )
+                        st.rerun()
+                    except ValueError:
+                        st.error("Edge already exists.")
+
+        # =====================================================================
+        # EDIT SELECTED NODE / DELETE NODE / DELETE EDGES
+        # =====================================================================
+        center_node_id_edit = st.session_state.graph_center_node
+        if center_node_id_edit:
+            center = store.get_node(center_node_id_edit)
+            if center:
+                st.markdown("---")
+                st.markdown(f"**{center.label}**")
+                edited_by = center.properties.get("edited_by", "llm")
+                st.caption(f"{center.node_type} · edited by: {edited_by}")
+
+                # --- Edit properties ---
+                with st.expander("Edit Properties", expanded=False):
+                    edit_label = st.text_input(
+                        "Label",
+                        value=center.label,
+                        key="edit_node_label",
+                    )
+                    edit_props: dict = {}
+                    fields = _NODE_PROPERTY_FIELDS.get(center.node_type, ["description"])
+                    for field in fields:
+                        current_val = center.properties.get(field, "")
+                        if field == "domain_tags":
+                            current_tags = ", ".join(current_val) if isinstance(current_val, list) else str(current_val)
+                            val = st.text_input(
+                                "Domain tags (comma-separated)",
+                                value=current_tags,
+                                key=f"edit_node_{field}",
+                            )
+                            edit_props[field] = [t.strip() for t in val.split(",") if t.strip()]
+                        elif field == "innovation_type":
+                            options = ["architecture", "problem_framing", "loss_trick",
+                                       "eval_methodology", "dataset", "training_technique"]
+                            idx = options.index(current_val) if current_val in options else 0
+                            edit_props[field] = st.selectbox(
+                                "Innovation type",
+                                options=options,
+                                index=idx,
+                                key=f"edit_node_{field}",
+                            )
+                        else:
+                            val = st.text_area(
+                                field.replace("_", " ").capitalize(),
+                                value=str(current_val),
+                                key=f"edit_node_{field}",
+                                height=68,
+                            )
+                            edit_props[field] = val.strip()
+
+                    if st.button("Save Changes", key="btn_save_node"):
+                        edit_props["edited_by"] = "user"
+                        store.update_node_properties(center_node_id_edit, edit_props)
+                        # Update label if changed
+                        if edit_label.strip() and edit_label.strip() != center.label:
+                            store.upsert_node(
+                                center_node_id_edit,
+                                center.node_type,
+                                edit_label.strip(),
+                                {**center.properties, **edit_props},
+                            )
+                        logger.info("User edited node %s", center_node_id_edit)
+                        st.rerun()
+
+                # --- Delete node ---
+                if st.session_state.confirm_delete_node:
+                    st.warning(f"Delete **{center.label}** and all its edges?")
+                    col_yes, col_no = st.columns(2)
+                    with col_yes:
+                        if st.button("Yes, delete", key="btn_confirm_del_node"):
+                            removed = store.delete_node(center_node_id_edit)
+                            logger.info(
+                                "User deleted node %s (%d edges removed)",
+                                center_node_id_edit, removed,
+                            )
+                            st.session_state.graph_center_node = None
+                            st.session_state.confirm_delete_node = False
+                            st.rerun()
+                    with col_no:
+                        if st.button("Cancel", key="btn_cancel_del_node"):
+                            st.session_state.confirm_delete_node = False
+                            st.rerun()
+                else:
+                    if st.button("Delete Node", key="btn_delete_node", type="secondary"):
+                        st.session_state.confirm_delete_node = True
+                        st.rerun()
+
+                # --- Connected edges with delete ---
+                edges_from = store.get_edges_from(center_node_id_edit)
+                edges_to = store.get_edges_to(center_node_id_edit)
+                total_edges = len(edges_from) + len(edges_to)
+                if total_edges > 0:
+                    with st.expander(f"Connections ({total_edges})"):
+                        for e in edges_from:
+                            target = store.get_node(e.target_id)
+                            target_label = target.label if target else e.target_id
+                            ecol_info, ecol_del = st.columns([4, 1])
+                            with ecol_info:
+                                st.text(f"-> [{e.relationship_type}] -> {target_label}")
+                            with ecol_del:
+                                edge_key = f"del_e_{e.source_id}_{e.target_id}_{e.relationship_type}"
+                                if st.button("X", key=edge_key, help="Delete this edge"):
+                                    store.delete_edge(e.source_id, e.target_id, e.relationship_type)
+                                    logger.info(
+                                        "User deleted edge %s -[%s]-> %s",
+                                        e.source_id, e.relationship_type, e.target_id,
+                                    )
+                                    st.rerun()
+                        for e in edges_to:
+                            source = store.get_node(e.source_id)
+                            source_label = source.label if source else e.source_id
+                            ecol_info, ecol_del = st.columns([4, 1])
+                            with ecol_info:
+                                st.text(f"<- [{e.relationship_type}] <- {source_label}")
+                            with ecol_del:
+                                edge_key = f"del_e_{e.source_id}_{e.target_id}_{e.relationship_type}"
+                                if st.button("X", key=edge_key, help="Delete this edge"):
+                                    store.delete_edge(e.source_id, e.target_id, e.relationship_type)
+                                    logger.info(
+                                        "User deleted edge %s -[%s]-> %s",
+                                        e.source_id, e.relationship_type, e.target_id,
+                                    )
+                                    st.rerun()
 
 # ---------------------------------------------------------------------------
 # Footer
