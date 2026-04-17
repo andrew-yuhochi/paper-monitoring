@@ -718,3 +718,69 @@ class TestTemporalQueries:
         store.upsert_edge("concept:a", "concept:b", "PREREQUISITE_OF")
         edges = store.get_edges_created_since("2099-01-01")
         assert edges == []
+
+
+# ---------------------------------------------------------------------------
+# get_node_neighborhood
+# ---------------------------------------------------------------------------
+
+
+class TestGetNodeNeighborhood:
+    @pytest.fixture(autouse=True)
+    def _seed_graph(self, store: GraphStore) -> None:
+        """Create a small graph: A -> B -> C, A -> D."""
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.upsert_node("concept:c", "concept", "C", {})
+        store.upsert_node("technique:d", "technique", "D", {})
+        store.upsert_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        store.upsert_edge("concept:b", "concept:c", "PREREQUISITE_OF")
+        store.upsert_edge("concept:a", "technique:d", "BUILDS_ON")
+
+    def test_depth_0_returns_only_start_node(self, store: GraphStore) -> None:
+        result = store.get_node_neighborhood("concept:a", depth=0)
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["id"] == "concept:a"
+        assert result["edges"] == []
+
+    def test_depth_1_returns_immediate_neighbors(self, store: GraphStore) -> None:
+        result = store.get_node_neighborhood("concept:a", depth=1)
+        node_ids = {n["id"] for n in result["nodes"]}
+        assert node_ids == {"concept:a", "concept:b", "technique:d"}
+        assert len(result["edges"]) == 2
+
+    def test_depth_2_reaches_two_hops(self, store: GraphStore) -> None:
+        result = store.get_node_neighborhood("concept:a", depth=2)
+        node_ids = {n["id"] for n in result["nodes"]}
+        assert node_ids == {"concept:a", "concept:b", "concept:c", "technique:d"}
+        assert len(result["edges"]) == 3
+
+    def test_follows_incoming_edges(self, store: GraphStore) -> None:
+        """Starting from B, depth=1 should find A (via incoming edge) and C (via outgoing)."""
+        result = store.get_node_neighborhood("concept:b", depth=1)
+        node_ids = {n["id"] for n in result["nodes"]}
+        assert "concept:a" in node_ids  # incoming PREREQUISITE_OF
+        assert "concept:c" in node_ids  # outgoing PREREQUISITE_OF
+
+    def test_nonexistent_node_returns_empty(self, store: GraphStore) -> None:
+        result = store.get_node_neighborhood("concept:missing", depth=1)
+        assert result == {"nodes": [], "edges": []}
+
+    def test_no_duplicate_edges(self, store: GraphStore) -> None:
+        result = store.get_node_neighborhood("concept:a", depth=2)
+        edge_keys = [
+            (e["source_id"], e["target_id"], e["relationship_type"])
+            for e in result["edges"]
+        ]
+        assert len(edge_keys) == len(set(edge_keys))
+
+    def test_nodes_include_properties(self, store: GraphStore) -> None:
+        store.update_node_properties("concept:a", {"description": "Node A"})
+        result = store.get_node_neighborhood("concept:a", depth=0)
+        assert result["nodes"][0]["properties"]["description"] == "Node A"
+
+    def test_isolated_node_depth_1(self, store: GraphStore) -> None:
+        store.upsert_node("concept:isolated", "concept", "Isolated", {})
+        result = store.get_node_neighborhood("concept:isolated", depth=1)
+        assert len(result["nodes"]) == 1
+        assert result["edges"] == []

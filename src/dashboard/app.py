@@ -1,8 +1,9 @@
 """Paper Monitoring — Streamlit Dashboard.
 
-Single-page app with two tabs:
+Single-page app with three tabs:
   1. Classified Papers — weekly pipeline results (seed papers hidden)
   2. Knowledge Bank — foundational concepts with sources and prerequisites
+  3. Graph — interactive knowledge graph visualization
 
 Launch:  streamlit run src/dashboard/app.py
 """
@@ -24,6 +25,10 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import streamlit as st  # noqa: E402
+from streamlit_agraph import Config as AgraphConfig  # noqa: E402
+from streamlit_agraph import Edge as AgraphEdge  # noqa: E402
+from streamlit_agraph import Node as AgraphNode  # noqa: E402
+from streamlit_agraph import agraph  # noqa: E402
 
 from src.config import settings as default_settings  # noqa: E402
 from src.store.graph_store import GraphStore  # noqa: E402
@@ -41,6 +46,34 @@ st.set_page_config(page_title="Paper Monitoring", layout="wide")
 _VENV_PYTHON = _PROJECT_ROOT / ".venv" / "bin" / "python"
 _PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
 
+# Node type -> color mapping
+_NODE_COLORS: dict[str, str] = {
+    "problem": "#E74C3C",     # red
+    "technique": "#3498DB",   # blue
+    "concept": "#2ECC71",     # green
+    "category": "#95A5A6",    # gray
+    "paper": "#F1C40F",       # yellow
+}
+
+_NODE_SIZES: dict[str, int] = {
+    "problem": 30,
+    "technique": 28,
+    "concept": 22,
+    "category": 20,
+    "paper": 18,
+}
+
+# Edge relationship type -> color
+_EDGE_COLORS: dict[str, str] = {
+    "PREREQUISITE_OF": "#95A5A6",
+    "BUILDS_ON": "#2ECC71",
+    "INTRODUCES": "#F1C40F",
+    "ADDRESSES": "#E74C3C",
+    "BASELINE_OF": "#8E44AD",
+    "ALTERNATIVE_TO": "#E67E22",
+    "BELONGS_TO": "#BDC3C7",
+}
+
 
 # ---------------------------------------------------------------------------
 # Session-state initialisation
@@ -52,6 +85,9 @@ if "running" not in st.session_state:
     st.session_state.event_queue = queue.Queue()
     st.session_state.progress_log: list[str] = []
     st.session_state.final_status = None
+
+if "graph_center_node" not in st.session_state:
+    st.session_state.graph_center_node = None
 
 
 # ---------------------------------------------------------------------------
@@ -176,10 +212,10 @@ elif st.session_state.final_status == "error":
     st.session_state.final_status = None
 
 # ---------------------------------------------------------------------------
-# Tabs: Classified Papers | Knowledge Bank
+# Tabs: Classified Papers | Knowledge Bank | Graph
 # ---------------------------------------------------------------------------
 
-tab_papers, tab_concepts = st.tabs(["Classified Papers", "Knowledge Bank"])
+tab_papers, tab_concepts, tab_graph = st.tabs(["Classified Papers", "Knowledge Bank", "Graph"])
 
 # ---------------------------------------------------------------------------
 # Tab 1: Classified Papers (seed papers hidden)
@@ -289,6 +325,162 @@ with tab_concepts:
                         st.caption(f"Source: {props['seeded_from']}")
                     if prereqs:
                         st.caption(f"Prerequisites: {', '.join(prereqs)}")
+
+# ---------------------------------------------------------------------------
+# Tab 3: Graph — interactive knowledge graph visualization
+# ---------------------------------------------------------------------------
+
+with tab_graph:
+    # --- Node type filter ---
+    st.markdown("##### Node type filter")
+    filter_cols = st.columns(5)
+    type_labels = ["problem", "technique", "concept", "category", "paper"]
+    visible_types: set[str] = set()
+    for i, ntype in enumerate(type_labels):
+        with filter_cols[i]:
+            color_dot = f'<span style="color:{_NODE_COLORS[ntype]}">&#9679;</span>'
+            if st.checkbox(
+                f"{ntype.capitalize()}",
+                value=True,
+                key=f"graph_filter_{ntype}",
+            ):
+                visible_types.add(ntype)
+
+    # --- Legend ---
+    legend_parts = [
+        f'<span style="color:{_NODE_COLORS[t]}">&#9679;</span> {t.capitalize()}'
+        for t in type_labels
+    ]
+    st.markdown(" &nbsp;&nbsp; ".join(legend_parts), unsafe_allow_html=True)
+
+    # --- Node selector for centering ---
+    all_nodes_by_type = {}
+    for ntype in visible_types:
+        nodes_of_type = store.get_nodes_by_type(ntype)
+        for n in nodes_of_type:
+            all_nodes_by_type[f"{n.label} ({ntype})"] = n.id
+
+    if not all_nodes_by_type:
+        st.info("No nodes in the knowledge bank yet. Run the seed pipeline or add nodes manually.")
+    else:
+        # Build select options sorted alphabetically
+        node_options = sorted(all_nodes_by_type.keys())
+
+        # Determine the current center
+        center_node_id = st.session_state.graph_center_node
+        # Find the display label for the current center
+        center_label = None
+        for label, nid in all_nodes_by_type.items():
+            if nid == center_node_id:
+                center_label = label
+                break
+
+        selected_label = st.selectbox(
+            "Center on node",
+            options=node_options,
+            index=node_options.index(center_label) if center_label in node_options else 0,
+            key="graph_node_selector",
+        )
+        center_node_id = all_nodes_by_type.get(selected_label)
+
+        if center_node_id:
+            st.session_state.graph_center_node = center_node_id
+
+            # Fetch neighborhood
+            neighborhood = store.get_node_neighborhood(center_node_id, depth=1)
+            graph_nodes = neighborhood["nodes"]
+            graph_edges = neighborhood["edges"]
+
+            # Filter nodes by visible types
+            graph_nodes = [n for n in graph_nodes if n["node_type"] in visible_types]
+            visible_node_ids = {n["id"] for n in graph_nodes}
+
+            # Filter edges to only connect visible nodes
+            graph_edges = [
+                e for e in graph_edges
+                if e["source_id"] in visible_node_ids and e["target_id"] in visible_node_ids
+            ]
+
+            if not graph_nodes:
+                st.warning("No visible nodes after filtering. Try enabling more node types.")
+            else:
+                # Build streamlit-agraph nodes
+                agraph_nodes = []
+                for n in graph_nodes:
+                    ntype = n["node_type"]
+                    is_center = n["id"] == center_node_id
+                    agraph_nodes.append(
+                        AgraphNode(
+                            id=n["id"],
+                            label=n["label"],
+                            color=_NODE_COLORS.get(ntype, "#CCCCCC"),
+                            size=_NODE_SIZES.get(ntype, 20) + (8 if is_center else 0),
+                            title=f"[{ntype}] {n['label']}",
+                            shape="dot",
+                        )
+                    )
+
+                # Build streamlit-agraph edges
+                agraph_edges = []
+                for e in graph_edges:
+                    rtype = e["relationship_type"]
+                    agraph_edges.append(
+                        AgraphEdge(
+                            source=e["source_id"],
+                            target=e["target_id"],
+                            label=rtype,
+                            color=_EDGE_COLORS.get(rtype, "#CCCCCC"),
+                        )
+                    )
+
+                # Render graph
+                config = AgraphConfig(
+                    height=600,
+                    width=900,
+                    directed=True,
+                    physics=True,
+                    hierarchical=False,
+                )
+
+                clicked_node = agraph(
+                    nodes=agraph_nodes,
+                    edges=agraph_edges,
+                    config=config,
+                )
+
+                # Handle click to re-center
+                if clicked_node and clicked_node != center_node_id:
+                    st.session_state.graph_center_node = clicked_node
+                    st.rerun()
+
+                # --- Node details panel ---
+                center = store.get_node(center_node_id)
+                if center:
+                    st.markdown("---")
+                    st.markdown(f"**Selected: {center.label}** ({center.node_type})")
+                    props = center.properties
+                    if props.get("description"):
+                        st.write(props["description"])
+                    if props.get("approach"):
+                        st.write(f"**Approach:** {props['approach']}")
+                    if props.get("domain_tags"):
+                        st.write("**Tags:** " + ", ".join(f"`{t}`" for t in props["domain_tags"]))
+                    if props.get("edited_by"):
+                        st.caption(f"Edited by: {props['edited_by']}")
+
+                    # Show connected edges
+                    edges_from = store.get_edges_from(center_node_id)
+                    edges_to = store.get_edges_to(center_node_id)
+                    if edges_from or edges_to:
+                        with st.expander(f"Connections ({len(edges_from) + len(edges_to)})"):
+                            for e in edges_from:
+                                target = store.get_node(e.target_id)
+                                target_label = target.label if target else e.target_id
+                                st.text(f"  -> [{e.relationship_type}] -> {target_label}")
+                            for e in edges_to:
+                                source = store.get_node(e.source_id)
+                                source_label = source.label if source else e.source_id
+                                st.text(f"  <- [{e.relationship_type}] <- {source_label}")
 
 # ---------------------------------------------------------------------------
 # Footer

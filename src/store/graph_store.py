@@ -533,6 +533,83 @@ class GraphStore:
         return [self._row_to_edge(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Graph neighborhood (MVP — for visualization)
+    # ------------------------------------------------------------------
+
+    def get_node_neighborhood(
+        self,
+        node_id: str,
+        depth: int = 1,
+    ) -> dict:
+        """Return a node and all nodes/edges within N hops via BFS.
+
+        Returns ``{"nodes": [dict], "edges": [dict]}`` where each node dict
+        has keys ``id``, ``node_type``, ``label``, ``properties`` and each
+        edge dict has keys ``source_id``, ``target_id``, ``relationship_type``,
+        ``weight``, ``properties``.
+
+        Returns empty lists if the starting node does not exist.
+        """
+        start = self.get_node(node_id)
+        if start is None:
+            return {"nodes": [], "edges": []}
+
+        visited_nodes: dict[str, dict] = {}
+        collected_edges: list[dict] = []
+        edge_seen: set[tuple[str, str, str]] = set()
+
+        # BFS frontier
+        frontier = {node_id}
+        for _ in range(depth + 1):  # depth 0 = just the start node
+            for nid in frontier:
+                if nid in visited_nodes:
+                    continue
+                node = self.get_node(nid)
+                if node is None:
+                    continue
+                visited_nodes[nid] = {
+                    "id": node.id,
+                    "node_type": node.node_type,
+                    "label": node.label,
+                    "properties": node.properties,
+                }
+            if _ == depth:
+                break
+            # Expand frontier via edges (both directions)
+            next_frontier: set[str] = set()
+            for nid in frontier:
+                for edge in self.get_edges_from(nid):
+                    key = (edge.source_id, edge.target_id, edge.relationship_type)
+                    if key not in edge_seen:
+                        edge_seen.add(key)
+                        collected_edges.append({
+                            "source_id": edge.source_id,
+                            "target_id": edge.target_id,
+                            "relationship_type": edge.relationship_type,
+                            "weight": edge.weight,
+                            "properties": edge.properties,
+                        })
+                    next_frontier.add(edge.target_id)
+                for edge in self.get_edges_to(nid):
+                    key = (edge.source_id, edge.target_id, edge.relationship_type)
+                    if key not in edge_seen:
+                        edge_seen.add(key)
+                        collected_edges.append({
+                            "source_id": edge.source_id,
+                            "target_id": edge.target_id,
+                            "relationship_type": edge.relationship_type,
+                            "weight": edge.weight,
+                            "properties": edge.properties,
+                        })
+                    next_frontier.add(edge.source_id)
+            frontier = next_frontier - set(visited_nodes.keys())
+
+        return {
+            "nodes": list(visited_nodes.values()),
+            "edges": collected_edges,
+        }
+
+    # ------------------------------------------------------------------
     # Query helpers
     # ------------------------------------------------------------------
 
