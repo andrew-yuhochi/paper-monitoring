@@ -328,6 +328,211 @@ class GraphStore:
         return WeeklyRun(**dict(row))
 
     # ------------------------------------------------------------------
+    # Mutation methods for manual graph editing (MVP)
+    # ------------------------------------------------------------------
+
+    def add_node(
+        self,
+        node_id: str,
+        node_type: str,
+        label: str,
+        properties: dict,
+    ) -> None:
+        """Create a new node. Raises ValueError if node already exists."""
+        existing = self.get_node(node_id)
+        if existing is not None:
+            raise ValueError(f"Node already exists: {node_id}")
+        props_json = json.dumps(properties)
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO nodes (id, node_type, label, properties) VALUES (?, ?, ?, ?)",
+                (node_id, node_type, label, props_json),
+            )
+
+    def delete_node(self, node_id: str) -> int:
+        """Delete a node and all connected edges (incoming and outgoing).
+
+        Returns the number of edges removed.
+        Raises ValueError if the node does not exist.
+        """
+        existing = self.get_node(node_id)
+        if existing is None:
+            raise ValueError(f"Node does not exist: {node_id}")
+        with self._conn:
+            # Count edges before deletion
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE source_id = ? OR target_id = ?",
+                (node_id, node_id),
+            ).fetchone()
+            edge_count = row[0]
+            # Delete edges first (both directions)
+            self._conn.execute(
+                "DELETE FROM edges WHERE source_id = ? OR target_id = ?",
+                (node_id, node_id),
+            )
+            # Delete the node
+            self._conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+        logger.info("Deleted node %s and %d connected edges", node_id, edge_count)
+        return edge_count
+
+    def update_node_properties(
+        self,
+        node_id: str,
+        properties_patch: dict,
+    ) -> None:
+        """Merge a partial dict into the existing node properties JSON.
+
+        Does not overwrite keys not present in the patch.
+        Sets updated_at to the current timestamp.
+        Raises ValueError if node does not exist.
+        """
+        row = self._conn.execute(
+            "SELECT properties FROM nodes WHERE id = ?",
+            (node_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Node does not exist: {node_id}")
+        existing_props = json.loads(row["properties"]) if row["properties"] else {}
+        existing_props.update(properties_patch)
+        props_json = json.dumps(existing_props)
+        with self._conn:
+            self._conn.execute(
+                "UPDATE nodes SET properties = ?, updated_at = datetime('now') WHERE id = ?",
+                (props_json, node_id),
+            )
+
+    def add_edge(
+        self,
+        source_id: str,
+        target_id: str,
+        relationship_type: str,
+        weight: float = 1.0,
+        properties: dict | None = None,
+    ) -> None:
+        """Create a new edge. Raises ValueError if edge already exists."""
+        existing = self._conn.execute(
+            """
+            SELECT 1 FROM edges
+            WHERE source_id = ? AND target_id = ? AND relationship_type = ?
+            """,
+            (source_id, target_id, relationship_type),
+        ).fetchone()
+        if existing is not None:
+            raise ValueError(
+                f"Edge already exists: {source_id} -[{relationship_type}]-> {target_id}"
+            )
+        props_json = json.dumps(properties or {})
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO edges (source_id, target_id, relationship_type, weight, properties)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (source_id, target_id, relationship_type, weight, props_json),
+            )
+
+    def delete_edge(
+        self,
+        source_id: str,
+        target_id: str,
+        relationship_type: str,
+    ) -> None:
+        """Delete a specific edge. Raises ValueError if edge does not exist."""
+        with self._conn:
+            cur = self._conn.execute(
+                """
+                DELETE FROM edges
+                WHERE source_id = ? AND target_id = ? AND relationship_type = ?
+                """,
+                (source_id, target_id, relationship_type),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(
+                    f"Edge does not exist: {source_id} -[{relationship_type}]-> {target_id}"
+                )
+        logger.info(
+            "Deleted edge %s -[%s]-> %s", source_id, relationship_type, target_id
+        )
+
+    # ------------------------------------------------------------------
+    # Index methods for MVP (technique, problem)
+    # ------------------------------------------------------------------
+
+    def get_technique_index(self) -> list[str]:
+        """Return all technique node labels — injected into the analyzer prompt."""
+        rows = self._conn.execute(
+            "SELECT label FROM nodes WHERE node_type = 'technique' ORDER BY label",
+        ).fetchall()
+        return [r["label"] for r in rows]
+
+    def get_problem_index(self) -> list[str]:
+        """Return all problem node labels — injected into the analyzer prompt."""
+        rows = self._conn.execute(
+            "SELECT label FROM nodes WHERE node_type = 'problem' ORDER BY label",
+        ).fetchall()
+        return [r["label"] for r in rows]
+
+    # ------------------------------------------------------------------
+    # Temporal query methods (MVP — for ChangeDetector)
+    # ------------------------------------------------------------------
+
+    def get_nodes_created_since(
+        self,
+        since_date: str,
+        node_type: str | None = None,
+    ) -> list[Node]:
+        """Return nodes created on or after since_date, optionally filtered by type."""
+        if node_type:
+            rows = self._conn.execute(
+                """
+                SELECT id, node_type, label, properties
+                FROM nodes
+                WHERE created_at >= ? AND node_type = ?
+                ORDER BY created_at DESC
+                """,
+                (since_date, node_type),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT id, node_type, label, properties
+                FROM nodes
+                WHERE created_at >= ?
+                ORDER BY created_at DESC
+                """,
+                (since_date,),
+            ).fetchall()
+        return [self._row_to_node(r) for r in rows]
+
+    def get_edges_created_since(
+        self,
+        since_date: str,
+        relationship_type: str | None = None,
+    ) -> list[Edge]:
+        """Return edges created on or after since_date, optionally filtered by type."""
+        if relationship_type:
+            rows = self._conn.execute(
+                """
+                SELECT source_id, target_id, relationship_type, weight, properties
+                FROM edges
+                WHERE created_at >= ? AND relationship_type = ?
+                ORDER BY created_at DESC
+                """,
+                (since_date, relationship_type),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT source_id, target_id, relationship_type, weight, properties
+                FROM edges
+                WHERE created_at >= ?
+                ORDER BY created_at DESC
+                """,
+                (since_date,),
+            ).fetchall()
+        return [self._row_to_edge(r) for r in rows]
+
+    # ------------------------------------------------------------------
     # Query helpers
     # ------------------------------------------------------------------
 

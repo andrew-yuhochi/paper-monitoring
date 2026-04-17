@@ -461,3 +461,260 @@ class TestGetPapersForDigest:
 
     def test_returns_empty_for_unknown_date(self, store: GraphStore) -> None:
         assert store.get_papers_for_digest("1999-01-01") == []
+
+
+# ---------------------------------------------------------------------------
+# add_node
+# ---------------------------------------------------------------------------
+
+
+class TestAddNode:
+    def test_creates_new_node(self, store: GraphStore) -> None:
+        store.add_node("concept:relu", "concept", "ReLU", {"description": "Activation function."})
+        node = store.get_node("concept:relu")
+        assert node is not None
+        assert node.label == "ReLU"
+        assert node.properties["description"] == "Activation function."
+
+    def test_raises_if_node_exists(self, store: GraphStore, concept_node_data: dict) -> None:
+        store.upsert_node(**concept_node_data)
+        with pytest.raises(ValueError, match="already exists"):
+            store.add_node(
+                concept_node_data["node_id"],
+                concept_node_data["node_type"],
+                concept_node_data["label"],
+                concept_node_data["properties"],
+            )
+
+
+# ---------------------------------------------------------------------------
+# delete_node
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteNode:
+    def test_deletes_node_and_returns_zero_edges(self, store: GraphStore) -> None:
+        store.upsert_node("concept:x", "concept", "X", {})
+        removed = store.delete_node("concept:x")
+        assert removed == 0
+        assert store.get_node("concept:x") is None
+
+    def test_deletes_outgoing_edges(self, store: GraphStore) -> None:
+        store.upsert_node("paper:111", "paper", "P", {})
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.upsert_edge("paper:111", "concept:a", "BUILDS_ON")
+        store.upsert_edge("paper:111", "concept:b", "BUILDS_ON")
+        removed = store.delete_node("paper:111")
+        assert removed == 2
+        assert store.get_edges_from("paper:111") == []
+
+    def test_deletes_incoming_edges(self, store: GraphStore) -> None:
+        store.upsert_node("paper:111", "paper", "P", {})
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_edge("paper:111", "concept:a", "INTRODUCES")
+        removed = store.delete_node("concept:a")
+        assert removed == 1
+        assert store.get_edges_from("paper:111") == []
+
+    def test_deletes_both_directions(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.upsert_node("concept:c", "concept", "C", {})
+        store.upsert_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        store.upsert_edge("concept:c", "concept:b", "PREREQUISITE_OF")
+        store.upsert_edge("concept:b", "concept:c", "PREREQUISITE_OF")
+        removed = store.delete_node("concept:b")
+        assert removed == 3
+
+    def test_raises_if_node_does_not_exist(self, store: GraphStore) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            store.delete_node("concept:nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# update_node_properties
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateNodeProperties:
+    def test_merges_patch_into_existing(self, store: GraphStore) -> None:
+        store.upsert_node("concept:x", "concept", "X", {"description": "Original", "tags": ["ml"]})
+        store.update_node_properties("concept:x", {"description": "Updated"})
+        node = store.get_node("concept:x")
+        assert node.properties["description"] == "Updated"
+        assert node.properties["tags"] == ["ml"]  # untouched
+
+    def test_adds_new_keys(self, store: GraphStore) -> None:
+        store.upsert_node("concept:x", "concept", "X", {"description": "Orig"})
+        store.update_node_properties("concept:x", {"edited_by": "user"})
+        node = store.get_node("concept:x")
+        assert node.properties["edited_by"] == "user"
+        assert node.properties["description"] == "Orig"
+
+    def test_sets_updated_at(self, store: GraphStore) -> None:
+        store.upsert_node("concept:x", "concept", "X", {})
+        ts_before = store._conn.execute(
+            "SELECT updated_at FROM nodes WHERE id = 'concept:x'"
+        ).fetchone()[0]
+        store.update_node_properties("concept:x", {"edited_by": "user"})
+        ts_after = store._conn.execute(
+            "SELECT updated_at FROM nodes WHERE id = 'concept:x'"
+        ).fetchone()[0]
+        assert ts_after >= ts_before
+
+    def test_raises_if_node_does_not_exist(self, store: GraphStore) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            store.update_node_properties("concept:missing", {"x": 1})
+
+
+# ---------------------------------------------------------------------------
+# add_edge
+# ---------------------------------------------------------------------------
+
+
+class TestAddEdge:
+    def test_creates_new_edge(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.add_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        edges = store.get_edges_from("concept:a", "PREREQUISITE_OF")
+        assert len(edges) == 1
+        assert edges[0].target_id == "concept:b"
+
+    def test_creates_edge_with_weight_and_properties(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.add_edge("concept:a", "concept:b", "PREREQUISITE_OF", weight=0.8, properties={"edited_by": "user"})
+        edges = store.get_edges_from("concept:a")
+        assert edges[0].weight == pytest.approx(0.8)
+        assert edges[0].properties["edited_by"] == "user"
+
+    def test_raises_if_edge_exists(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.add_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        with pytest.raises(ValueError, match="already exists"):
+            store.add_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+
+
+# ---------------------------------------------------------------------------
+# delete_edge
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteEdge:
+    def test_deletes_existing_edge(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.upsert_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        store.delete_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        assert store.get_edges_from("concept:a", "PREREQUISITE_OF") == []
+
+    def test_only_deletes_specific_edge(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.upsert_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        store.upsert_edge("concept:a", "concept:b", "BUILDS_ON")
+        store.delete_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        remaining = store.get_edges_from("concept:a")
+        assert len(remaining) == 1
+        assert remaining[0].relationship_type == "BUILDS_ON"
+
+    def test_raises_if_edge_does_not_exist(self, store: GraphStore) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            store.delete_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+
+
+# ---------------------------------------------------------------------------
+# get_technique_index / get_problem_index
+# ---------------------------------------------------------------------------
+
+
+class TestMVPIndexMethods:
+    def test_get_technique_index_sorted(self, store: GraphStore) -> None:
+        store.upsert_node("technique:xgboost", "technique", "XGBoost", {})
+        store.upsert_node("technique:lightgbm", "technique", "LightGBM", {})
+        store.upsert_node("technique:catboost", "technique", "CatBoost", {})
+        index = store.get_technique_index()
+        assert index == ["CatBoost", "LightGBM", "XGBoost"]
+
+    def test_get_technique_index_excludes_other_types(self, store: GraphStore) -> None:
+        store.upsert_node("technique:xgboost", "technique", "XGBoost", {})
+        store.upsert_node("concept:boosting", "concept", "Boosting", {})
+        index = store.get_technique_index()
+        assert index == ["XGBoost"]
+
+    def test_get_technique_index_empty(self, store: GraphStore) -> None:
+        assert store.get_technique_index() == []
+
+    def test_get_problem_index_sorted(self, store: GraphStore) -> None:
+        store.upsert_node("problem:tabular", "problem", "Tabular prediction", {})
+        store.upsert_node("problem:image", "problem", "Image classification", {})
+        index = store.get_problem_index()
+        assert index == ["Image classification", "Tabular prediction"]
+
+    def test_get_problem_index_excludes_other_types(self, store: GraphStore) -> None:
+        store.upsert_node("problem:tabular", "problem", "Tabular prediction", {})
+        store.upsert_node("technique:xgboost", "technique", "XGBoost", {})
+        index = store.get_problem_index()
+        assert index == ["Tabular prediction"]
+
+    def test_get_problem_index_empty(self, store: GraphStore) -> None:
+        assert store.get_problem_index() == []
+
+
+# ---------------------------------------------------------------------------
+# get_nodes_created_since / get_edges_created_since
+# ---------------------------------------------------------------------------
+
+
+class TestTemporalQueries:
+    def test_get_nodes_created_since_returns_recent(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        # Both nodes were created "now", so querying from yesterday returns both
+        nodes = store.get_nodes_created_since("2020-01-01")
+        assert len(nodes) == 2
+
+    def test_get_nodes_created_since_filters_by_type(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("technique:b", "technique", "B", {})
+        nodes = store.get_nodes_created_since("2020-01-01", node_type="concept")
+        assert len(nodes) == 1
+        assert nodes[0].node_type == "concept"
+
+    def test_get_nodes_created_since_returns_empty_for_future(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        nodes = store.get_nodes_created_since("2099-01-01")
+        assert nodes == []
+
+    def test_get_nodes_created_since_no_type_filter(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("problem:b", "problem", "B", {})
+        store.upsert_node("technique:c", "technique", "C", {})
+        nodes = store.get_nodes_created_since("2020-01-01")
+        assert len(nodes) == 3
+
+    def test_get_edges_created_since_returns_recent(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.upsert_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        edges = store.get_edges_created_since("2020-01-01")
+        assert len(edges) == 1
+
+    def test_get_edges_created_since_filters_by_type(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.upsert_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        store.upsert_edge("concept:a", "concept:b", "BUILDS_ON")
+        edges = store.get_edges_created_since("2020-01-01", relationship_type="PREREQUISITE_OF")
+        assert len(edges) == 1
+        assert edges[0].relationship_type == "PREREQUISITE_OF"
+
+    def test_get_edges_created_since_returns_empty_for_future(self, store: GraphStore) -> None:
+        store.upsert_node("concept:a", "concept", "A", {})
+        store.upsert_node("concept:b", "concept", "B", {})
+        store.upsert_edge("concept:a", "concept:b", "PREREQUISITE_OF")
+        edges = store.get_edges_created_since("2099-01-01")
+        assert edges == []
