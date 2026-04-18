@@ -18,6 +18,16 @@ _NODE_COLORS: dict[str, str] = {
     "paper": "#F1C40F",
 }
 
+_EDGE_COLORS: dict[str, str] = {
+    "solves": "#E74C3C",
+    "enables": "#3498DB",
+    "uses": "#2ECC71",
+    "introduces": "#F1C40F",
+    "builds_on": "#9B59B6",
+    "categorized_as": "#95A5A6",
+    "related_to": "#E67E22",
+}
+
 _NODE_SIZES: dict[str, int] = {
     "problem": 10,
     "technique": 8,
@@ -85,6 +95,7 @@ def render_graph_3d(
     edges_json = _safe_json(enriched_edges)
     node_types_json = _safe_json(list(_NODE_COLORS.keys()))
     node_colors_json = _safe_json(_NODE_COLORS)
+    edge_colors_json = _safe_json(_EDGE_COLORS)
 
     return f"""<!DOCTYPE html>
 <html>
@@ -133,6 +144,10 @@ def render_graph_3d(
       <b>Node types</b>
       <div id="type-filters"></div>
     </div>
+    <div style="margin-top:8px; border-top:1px solid #444; padding-top:6px;">
+      <b>Edge types</b>
+      <div id="edge-legend"></div>
+    </div>
   </div>
   <div id="graph"></div>
 
@@ -143,11 +158,24 @@ def render_graph_3d(
     const allEdges = {edges_json};
     const NODE_TYPES = {node_types_json};
     const NODE_COLORS = {node_colors_json};
+    const EDGE_COLORS = {edge_colors_json};
 
     // ── State ────────────────────────────────────────────────────────────────
     let selectedNodeId = null;
     let hopDepth = 2;
     let visibleTypes = new Set(NODE_TYPES);
+
+    // ── Edge type legend ─────────────────────────────────────────────────────
+    const edgeLegend = document.getElementById('edge-legend');
+    Object.entries(EDGE_COLORS).forEach(([rel, color]) => {{
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:2px 0;';
+      const line = document.createElement('span');
+      line.style.cssText = 'display:inline-block;width:18px;height:2px;background:' + color + ';flex-shrink:0;border-radius:1px;';
+      row.appendChild(line);
+      row.appendChild(document.createTextNode(rel.replace(/_/g,' ')));
+      edgeLegend.appendChild(row);
+    }});
 
     // ── Type-filter checkboxes ───────────────────────────────────────────────
     const filterContainer = document.getElementById('type-filters');
@@ -233,10 +261,13 @@ def render_graph_3d(
         .linkSource('source')
         .linkTarget('target')
         .linkLabel(l => l.relationship_type || '')
-        .linkColor(() => '#888888')
-        .linkOpacity(0.6)
-        .linkWidth(0.8)
+        .linkColor(l => EDGE_COLORS[(l.relationship_type || '').toLowerCase()] || '#888888')
+        .linkOpacity(0.8)
+        .linkWidth(1.2)
         .linkCurvature(0.15)
+        .linkDirectionalArrowLength(5)
+        .linkDirectionalArrowRelPos(1)
+        .linkDirectionalArrowColor(l => EDGE_COLORS[(l.relationship_type || '').toLowerCase()] || '#888888')
         .graphData(computeVisible());
 
       // Always-visible node labels via SpriteText (scale with camera distance)
@@ -244,30 +275,34 @@ def render_graph_3d(
         graph
           .nodeThreeObject(node => {{
             const sprite = new SpriteText(node.label);
-            sprite.color = '#ffffff';
-            sprite.textHeight = 5;
-            sprite.backgroundColor = 'rgba(0,0,0,0.45)';
-            sprite.padding = 2;
+            sprite.color = node.color || '#ffffff';
+            sprite.textHeight = 12;
+            sprite.backgroundColor = 'rgba(0,0,0,0.65)';
+            sprite.padding = 3;
             sprite.borderRadius = 3;
             return sprite;
           }})
           .nodeThreeObjectExtend(true);
       }}
 
-      // Node click: fly camera to node + apply hop filter
+      // Node click: fly camera toward node from current angle, apply hop filter
       graph.onNodeClick(node => {{
         selectedNodeId = node.id;
         document.getElementById('center-label').textContent = node.label;
         document.getElementById('center-row').style.display = 'flex';
 
-        // Place camera at fixed distance along origin→node axis
-        const distance = 120;
-        const mag = Math.hypot(node.x || 0.1, node.y || 0.1, node.z || 0.1);
-        const ratio = 1 + distance / mag;
+        // Keep current viewing direction — translate along cam→node vector to
+        // land at `distance` units away from the clicked node.
+        const distance = 150;
+        const cam = graph.cameraPosition();
+        const nx = node.x || 0, ny = node.y || 0, nz = node.z || 0;
+        const dx = cam.x - nx, dy = cam.y - ny, dz = cam.z - nz;
+        const mag = Math.hypot(dx, dy, dz) || distance;
+        const scale = distance / mag;
         graph.cameraPosition(
-          {{ x: node.x * ratio, y: node.y * ratio, z: node.z * ratio }},
+          {{ x: nx + dx * scale, y: ny + dy * scale, z: nz + dz * scale }},
           node,
-          1000
+          800
         );
         applyFilters();
       }});
