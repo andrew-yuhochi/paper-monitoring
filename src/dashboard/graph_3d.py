@@ -1,8 +1,7 @@
 """3D WebGL knowledge graph renderer.
 
 Returns a self-contained HTML string that embeds a 3d-force-graph
-visualization. The HTML is designed to be injected via
-``st.components.v1.html()``.
+visualization designed to be injected via ``st.components.v1.html()``.
 """
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Node color and size by type — mirrors the app.py constants
 _NODE_COLORS: dict[str, str] = {
     "problem": "#E74C3C",
     "technique": "#3498DB",
@@ -28,8 +26,9 @@ _NODE_SIZES: dict[str, int] = {
     "paper": 6,
 }
 
-_THREE_CDN = "https://unpkg.com/three@0.166.0/build/three.min.js"
 _GRAPH_CDN = "https://unpkg.com/3d-force-graph@1.77.0/dist/3d-force-graph.min.js"
+# SpriteText provides always-visible 3D text labels that scale with camera distance
+_SPRITE_CDN = "https://unpkg.com/three-spritetext@1.9.0/dist/three-spritetext.min.js"
 
 
 def _safe_json(obj: object) -> str:
@@ -48,15 +47,13 @@ def render_graph_3d(
     Parameters
     ----------
     nodes:
-        Each dict must have keys ``id``, ``node_type``, ``label``,
-        ``properties``.
+        Each dict must have keys ``id``, ``node_type``, ``label``, ``properties``.
     edges:
         Each dict must have keys ``source_id``, ``target_id``,
         ``relationship_type``, ``weight``, ``properties``.
     height:
         Pixel height of the graph container.
     """
-    # Enrich nodes with color and size for the renderer
     enriched_nodes: list[dict] = []
     for n in nodes:
         ntype = n.get("node_type", "concept")
@@ -69,12 +66,16 @@ def render_graph_3d(
             "properties": n.get("properties", {}),
         })
 
-    # Remap source_id/target_id -> source/target for 3d-force-graph
+    # _sid/_tid preserve the original string IDs — 3d-force-graph mutates
+    # edge.source and edge.target from strings to node objects after the first
+    # graphData() call, which breaks BFS and filter lookups on re-render.
     enriched_edges: list[dict] = []
     for e in edges:
         enriched_edges.append({
             "source": e["source_id"],
             "target": e["target_id"],
+            "_sid": e["source_id"],
+            "_tid": e["target_id"],
             "relationship_type": e.get("relationship_type", ""),
             "weight": e.get("weight", 1.0),
             "properties": e.get("properties", {}),
@@ -82,7 +83,6 @@ def render_graph_3d(
 
     nodes_json = _safe_json(enriched_nodes)
     edges_json = _safe_json(enriched_edges)
-
     node_types_json = _safe_json(list(_NODE_COLORS.keys()))
     node_colors_json = _safe_json(_NODE_COLORS)
 
@@ -92,7 +92,7 @@ def render_graph_3d(
   <style>
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; background: #0a0a1a; overflow: hidden; }}
-    #graph {{ width: 100%; height: {height}px; }}
+    #graph {{ width: 100%; height: {height}px; position: relative; }}
     #controls {{
       position: absolute;
       top: 10px;
@@ -101,29 +101,34 @@ def render_graph_3d(
       color: white;
       font-family: sans-serif;
       font-size: 13px;
-      background: rgba(0,0,0,0.65);
+      background: rgba(0,0,0,0.7);
       padding: 10px 14px;
       border-radius: 6px;
       max-width: 220px;
-      line-height: 1.7;
+      line-height: 1.8;
     }}
     #controls label {{ display: flex; align-items: center; gap: 6px; cursor: pointer; }}
     #controls input[type=range] {{ width: 120px; }}
-    #center-label {{ margin-top: 6px; font-size: 11px; color: #aaa; word-break: break-word; }}
+    #center-row {{ display: none; margin-top: 4px; font-size: 11px; color: #aaa; }}
+    #center-row span {{ word-break: break-word; flex: 1; }}
+    #clear-btn {{
+      cursor: pointer; background: rgba(255,255,255,0.15);
+      border: none; color: white; border-radius: 3px;
+      padding: 1px 6px; font-size: 11px; flex-shrink: 0;
+    }}
+    #clear-btn:hover {{ background: rgba(255,255,255,0.3); }}
   </style>
 </head>
 <body>
   <div id="controls">
     <div>
-      <label>
-        <input type="checkbox" id="fly-mode"> Fly mode (WASD)
-      </label>
-    </div>
-    <div style="margin-top:6px;">
       <span>Depth: <b id="hop-val">2</b> hops</span><br>
       <input type="range" id="hop-slider" min="1" max="5" value="2">
     </div>
-    <div id="center-label"></div>
+    <div id="center-row">
+      <span id="center-label"></span>
+      <button id="clear-btn">✕ All</button>
+    </div>
     <div style="margin-top:8px; border-top:1px solid #444; padding-top:6px;">
       <b>Node types</b>
       <div id="type-filters"></div>
@@ -131,28 +136,24 @@ def render_graph_3d(
   </div>
   <div id="graph"></div>
 
-  <script src="{_THREE_CDN}"></script>
   <script src="{_GRAPH_CDN}"></script>
+  <script src="{_SPRITE_CDN}"></script>
   <script>
     const allNodes = {nodes_json};
     const allEdges = {edges_json};
     const NODE_TYPES = {node_types_json};
     const NODE_COLORS = {node_colors_json};
 
-    // -----------------------------------------------------------------------
-    // State
-    // -----------------------------------------------------------------------
+    // ── State ────────────────────────────────────────────────────────────────
     let selectedNodeId = null;
     let hopDepth = 2;
     let visibleTypes = new Set(NODE_TYPES);
 
-    // -----------------------------------------------------------------------
-    // Build type-filter checkboxes dynamically
-    // -----------------------------------------------------------------------
+    // ── Type-filter checkboxes ───────────────────────────────────────────────
     const filterContainer = document.getElementById('type-filters');
     NODE_TYPES.forEach(t => {{
       const lbl = document.createElement('label');
-      const cb = document.createElement('input');
+      const cb  = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = true;
       cb.dataset.type = t;
@@ -161,140 +162,142 @@ def render_graph_3d(
         applyFilters();
       }});
       const dot = document.createElement('span');
-      dot.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:50%;background:' + (NODE_COLORS[t] || '#ccc') + ';flex-shrink:0;';
+      dot.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:50%;background:'
+        + (NODE_COLORS[t] || '#ccc') + ';flex-shrink:0;';
       lbl.appendChild(cb);
       lbl.appendChild(dot);
       lbl.appendChild(document.createTextNode(' ' + t.charAt(0).toUpperCase() + t.slice(1)));
       filterContainer.appendChild(lbl);
     }});
 
-    // -----------------------------------------------------------------------
-    // BFS to compute visible node set from selected center up to N hops
-    // -----------------------------------------------------------------------
+    // ── BFS: _sid/_tid are the immutable original string IDs ─────────────────
     function bfsNeighborhood(centerId, depth) {{
       const adjOut = {{}};
-      const adjIn = {{}};
+      const adjIn  = {{}};
       allEdges.forEach(e => {{
-        if (!adjOut[e.source]) adjOut[e.source] = [];
-        adjOut[e.source].push(e.target);
-        if (!adjIn[e.target]) adjIn[e.target] = [];
-        adjIn[e.target].push(e.source);
+        if (!adjOut[e._sid]) adjOut[e._sid] = [];
+        adjOut[e._sid].push(e._tid);
+        if (!adjIn[e._tid]) adjIn[e._tid] = [];
+        adjIn[e._tid].push(e._sid);
       }});
-
       const visited = new Set([centerId]);
       let frontier = [centerId];
       for (let d = 0; d < depth; d++) {{
         const next = [];
         frontier.forEach(nid => {{
           (adjOut[nid] || []).forEach(t => {{ if (!visited.has(t)) {{ visited.add(t); next.push(t); }} }});
-          (adjIn[nid] || []).forEach(s => {{ if (!visited.has(s)) {{ visited.add(s); next.push(s); }} }});
+          (adjIn[nid]  || []).forEach(s => {{ if (!visited.has(s)) {{ visited.add(s); next.push(s); }} }});
         }});
         frontier = next;
-        if (frontier.length === 0) break;
+        if (!frontier.length) break;
       }}
       return visited;
     }}
 
-    // -----------------------------------------------------------------------
-    // Compute the currently visible node and edge sets
-    // -----------------------------------------------------------------------
+    // ── Compute visible subgraph ─────────────────────────────────────────────
     function computeVisible() {{
-      let hopSet = null;
-      if (selectedNodeId !== null) {{
-        hopSet = bfsNeighborhood(selectedNodeId, hopDepth);
-      }}
-
-      const nodeById = {{}};
-      allNodes.forEach(n => {{ nodeById[n.id] = n; }});
+      const hopSet = selectedNodeId !== null
+        ? bfsNeighborhood(selectedNodeId, hopDepth)
+        : null;
 
       const visibleNodes = allNodes.filter(n => {{
         if (!visibleTypes.has(n.node_type)) return false;
         if (hopSet !== null && !hopSet.has(n.id)) return false;
         return true;
       }});
+      const visibleIds = new Set(visibleNodes.map(n => n.id));
 
-      const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
-
+      // Use _sid/_tid — immune to 3d-force-graph's source/target mutation
       const visibleEdges = allEdges.filter(e =>
-        visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
+        visibleIds.has(e._sid) && visibleIds.has(e._tid)
       );
-
       return {{ nodes: visibleNodes, links: visibleEdges }};
     }}
 
-    // -----------------------------------------------------------------------
-    // Graph initialisation
-    // -----------------------------------------------------------------------
+    // ── Graph init (deferred for iframe layout) ──────────────────────────────
     const graphEl = document.getElementById('graph');
-    const graph = ForceGraph3D({{ rendererConfig: {{ antialias: true }} }})(graphEl)
-      .backgroundColor('#0a0a1a')
-      .nodeId('id')
-      .nodeLabel('label')
-      .nodeColor(n => n.color || '#cccccc')
-      .nodeVal(n => n.val || 5)
-      .linkSource('source')
-      .linkTarget('target')
-      .linkLabel(l => l.relationship_type || '')
-      .linkColor(() => '#aaaaaa')
-      .linkOpacity(0.5)
-      .linkWidth(0.5)
-      .d3AlphaDecay(0.05)
-      .controlType('orbit')
-      .graphData(computeVisible());
+    let graph;
 
-    // -----------------------------------------------------------------------
-    // Fog — requires THREE from the global CDN load
-    // -----------------------------------------------------------------------
-    graph.onEngineStop(() => {{
-      try {{
-        const scene = graph.scene();
-        if (scene && !scene.fog && window.THREE) {{
-          scene.fog = new THREE.FogExp2(0x000011, 0.002);
-        }}
-      }} catch (e) {{
-        // THREE not available yet; fog skipped
+    function initGraph() {{
+      const w = graphEl.offsetWidth  || window.innerWidth  || 800;
+      const h = graphEl.offsetHeight || {height};
+
+      graph = ForceGraph3D({{ rendererConfig: {{ antialias: true }} }})(graphEl)
+        .width(w)
+        .height(h)
+        .backgroundColor('#0a0a1a')
+        .nodeId('id')
+        .nodeLabel('label')
+        .nodeColor(n => n.color || '#cccccc')
+        .nodeVal(n => n.val || 5)
+        .linkSource('source')
+        .linkTarget('target')
+        .linkLabel(l => l.relationship_type || '')
+        .linkColor(() => '#888888')
+        .linkOpacity(0.6)
+        .linkWidth(0.8)
+        .linkCurvature(0.15)
+        .graphData(computeVisible());
+
+      // Always-visible node labels via SpriteText (scale with camera distance)
+      if (typeof SpriteText !== 'undefined') {{
+        graph
+          .nodeThreeObject(node => {{
+            const sprite = new SpriteText(node.label);
+            sprite.color = '#ffffff';
+            sprite.textHeight = 5;
+            sprite.backgroundColor = 'rgba(0,0,0,0.45)';
+            sprite.padding = 2;
+            sprite.borderRadius = 3;
+            return sprite;
+          }})
+          .nodeThreeObjectExtend(true);
       }}
-    }});
 
-    // -----------------------------------------------------------------------
-    // Node click: fly-to + BFS centering
-    // -----------------------------------------------------------------------
-    graph.onNodeClick((node) => {{
-      selectedNodeId = node.id;
-      document.getElementById('center-label').textContent = 'Center: ' + node.label;
-      // Animated camera fly-to
-      graph.cameraPosition(
-        {{ x: node.x + 40, y: node.y + 40, z: node.z + 40 }},
-        node,
-        1000
-      );
-      applyFilters();
-    }});
+      // Node click: fly camera to node + apply hop filter
+      graph.onNodeClick(node => {{
+        selectedNodeId = node.id;
+        document.getElementById('center-label').textContent = node.label;
+        document.getElementById('center-row').style.display = 'flex';
 
-    // -----------------------------------------------------------------------
-    // Filters: recompute and push to graph
-    // -----------------------------------------------------------------------
-    function applyFilters() {{
-      graph.graphData(computeVisible());
+        // Place camera at fixed distance along origin→node axis
+        const distance = 120;
+        const mag = Math.hypot(node.x || 0.1, node.y || 0.1, node.z || 0.1);
+        const ratio = 1 + distance / mag;
+        graph.cameraPosition(
+          {{ x: node.x * ratio, y: node.y * ratio, z: node.z * ratio }},
+          node,
+          1000
+        );
+        applyFilters();
+      }});
+
+      // Resize
+      window.addEventListener('resize', () => {{
+        graph.width(graphEl.offsetWidth).height(graphEl.offsetHeight);
+      }});
     }}
 
-    // -----------------------------------------------------------------------
-    // Hop slider
-    // -----------------------------------------------------------------------
-    const hopSlider = document.getElementById('hop-slider');
-    const hopVal = document.getElementById('hop-val');
-    hopSlider.addEventListener('input', () => {{
-      hopDepth = parseInt(hopSlider.value, 10);
-      hopVal.textContent = hopDepth;
+    // ── Filter helper ────────────────────────────────────────────────────────
+    function applyFilters() {{
+      if (graph) graph.graphData(computeVisible());
+    }}
+
+    // ── Hop slider ───────────────────────────────────────────────────────────
+    document.getElementById('hop-slider').addEventListener('input', e => {{
+      hopDepth = parseInt(e.target.value, 10);
+      document.getElementById('hop-val').textContent = hopDepth;
       if (selectedNodeId !== null) applyFilters();
     }});
 
-    // -----------------------------------------------------------------------
-    // Fly-mode toggle
-    // -----------------------------------------------------------------------
-    document.getElementById('fly-mode').addEventListener('change', (e) => {{
-      graph.controlType(e.target.checked ? 'fly' : 'orbit');
+    // ── Clear selection ──────────────────────────────────────────────────────
+    document.getElementById('clear-btn').addEventListener('click', () => {{
+      selectedNodeId = null;
+      document.getElementById('center-row').style.display = 'none';
+      applyFilters();
     }});
+
+    setTimeout(initGraph, 50);
   </script>
 </body>
 </html>"""

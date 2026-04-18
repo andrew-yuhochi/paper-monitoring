@@ -85,11 +85,18 @@ def test_output_contains_closing_html_tag(representative_graph: tuple) -> None:
     assert "</html>" in result
 
 
-def test_three_cdn_url_pinned(representative_graph: tuple) -> None:
-    """The THREE.js CDN URL must reference exactly three@0.166.0."""
+def test_spritetext_cdn_url_pinned(representative_graph: tuple) -> None:
+    """The SpriteText CDN URL must reference exactly three-spritetext@1.9.0."""
     nodes, edges = representative_graph
     result = render_graph_3d(nodes, edges)
-    assert "three@0.166.0" in result
+    assert "three-spritetext@1.9.0" in result
+
+
+def test_no_separate_three_cdn(representative_graph: tuple) -> None:
+    """No separate THREE.js CDN should be loaded (3d-force-graph bundles its own)."""
+    nodes, edges = representative_graph
+    result = render_graph_3d(nodes, edges)
+    assert "unpkg.com/three@" not in result
 
 
 def test_graph_cdn_url_pinned(representative_graph: tuple) -> None:
@@ -322,6 +329,40 @@ def test_target_id_key_absent_in_serialized_edges() -> None:
     data = json.loads(match.group(1))
     for edge in data:
         assert "target_id" not in edge, "target_id must not appear in serialized edges"
+
+
+def test_edge_has_sid_field() -> None:
+    """_sid must be present in serialized edges with the original source string ID."""
+    nodes = [_make_node("a", "concept", "A", {}), _make_node("b", "concept", "B", {})]
+    edges = [_make_edge("a", "b")]
+    result = render_graph_3d(nodes, edges)
+    match = re.search(r"const allEdges = (\[.*?\]);", result, re.DOTALL)
+    assert match
+    data = json.loads(match.group(1))
+    assert data[0]["_sid"] == "a", f"Expected _sid='a', got {data[0].get('_sid')!r}"
+
+
+def test_edge_has_tid_field() -> None:
+    """_tid must be present in serialized edges with the original target string ID."""
+    nodes = [_make_node("a", "concept", "A", {}), _make_node("b", "concept", "B", {})]
+    edges = [_make_edge("a", "b")]
+    result = render_graph_3d(nodes, edges)
+    match = re.search(r"const allEdges = (\[.*?\]);", result, re.DOTALL)
+    assert match
+    data = json.loads(match.group(1))
+    assert data[0]["_tid"] == "b", f"Expected _tid='b', got {data[0].get('_tid')!r}"
+
+
+def test_sid_tid_match_source_target() -> None:
+    """_sid/_tid must equal source/target at serialization time (before library mutation)."""
+    nodes = [_make_node("x", "technique", "X", {}), _make_node("y", "problem", "Y", {})]
+    edges = [_make_edge("x", "y", "solves")]
+    result = render_graph_3d(nodes, edges)
+    match = re.search(r"const allEdges = (\[.*?\]);", result, re.DOTALL)
+    assert match
+    data = json.loads(match.group(1))
+    assert data[0]["_sid"] == data[0]["source"]
+    assert data[0]["_tid"] == data[0]["target"]
 
 
 # ---------------------------------------------------------------------------
