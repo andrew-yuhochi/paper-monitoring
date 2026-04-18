@@ -26,12 +26,9 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import streamlit as st  # noqa: E402
-from streamlit_agraph import Config as AgraphConfig  # noqa: E402
-from streamlit_agraph import Edge as AgraphEdge  # noqa: E402
-from streamlit_agraph import Node as AgraphNode  # noqa: E402
-from streamlit_agraph import agraph  # noqa: E402
 
 from src.config import settings as default_settings  # noqa: E402
+from src.dashboard.graph_3d import render_graph_3d  # noqa: E402
 from src.store.graph_store import GraphStore  # noqa: E402
 from src.utils.normalize import normalize_concept_name  # noqa: E402
 
@@ -57,14 +54,6 @@ _NODE_COLORS: dict[str, str] = {
     "concept": "#2ECC71",     # green
     "category": "#95A5A6",    # gray
     "paper": "#F1C40F",       # yellow
-}
-
-_NODE_SIZES: dict[str, int] = {
-    "problem": 30,
-    "technique": 28,
-    "concept": 22,
-    "category": 20,
-    "paper": 18,
 }
 
 # Edge relationship type -> color
@@ -348,134 +337,45 @@ with tab_concepts:
 # ---------------------------------------------------------------------------
 
 with tab_graph:
-    # --- Node type filter ---
-    st.markdown("##### Node type filter")
-    filter_cols = st.columns(5)
     type_labels = ["problem", "technique", "concept", "category", "paper"]
-    visible_types: set[str] = set()
-    for i, ntype in enumerate(type_labels):
-        with filter_cols[i]:
-            if st.checkbox(
-                f"{ntype.capitalize()}",
-                value=True,
-                key=f"graph_filter_{ntype}",
-            ):
-                visible_types.add(ntype)
-
-    # --- Legend ---
-    legend_parts = [
-        f'<span style="color:{_NODE_COLORS[t]}">&#9679;</span> {t.capitalize()}'
-        for t in type_labels
-    ]
-    st.markdown(" &nbsp;&nbsp; ".join(legend_parts), unsafe_allow_html=True)
-
-    # --- Node selector for centering ---
-    all_nodes_by_type = {}
-    for ntype in visible_types:
-        nodes_of_type = store.get_nodes_by_type(ntype)
-        for n in nodes_of_type:
-            all_nodes_by_type[f"{n.label} ({ntype})"] = n.id
 
     # Even when the graph is empty, show the "Add Node" form
     graph_col, edit_col = st.columns([3, 1])
 
     with graph_col:
-        if not all_nodes_by_type:
+        # Collect all nodes across all types for the 3D graph
+        all_graph_nodes: list[dict] = []
+        for ntype in type_labels:
+            for n in store.get_nodes_by_type(ntype):
+                all_graph_nodes.append({
+                    "id": n.id,
+                    "node_type": n.node_type,
+                    "label": n.label,
+                    "properties": n.properties,
+                })
+
+        if not all_graph_nodes:
             st.info("No nodes in the knowledge bank yet. Use the editing panel to add nodes.")
         else:
-            # Build select options sorted alphabetically
-            node_options = sorted(all_nodes_by_type.keys())
+            # Collect all edges by fetching neighborhoods for all nodes.
+            # Use a large neighborhood from every node so all edges surface.
+            edge_seen: set[tuple[str, str, str]] = set()
+            all_graph_edges: list[dict] = []
+            for n in all_graph_nodes:
+                for e in store.get_edges_from(n["id"]):
+                    key = (e.source_id, e.target_id, e.relationship_type)
+                    if key not in edge_seen:
+                        edge_seen.add(key)
+                        all_graph_edges.append({
+                            "source_id": e.source_id,
+                            "target_id": e.target_id,
+                            "relationship_type": e.relationship_type,
+                            "weight": e.weight,
+                            "properties": e.properties,
+                        })
 
-            # Determine the current center
-            center_node_id = st.session_state.graph_center_node
-            center_label = None
-            for label, nid in all_nodes_by_type.items():
-                if nid == center_node_id:
-                    center_label = label
-                    break
-
-            selected_label = st.selectbox(
-                "Center on node",
-                options=node_options,
-                index=node_options.index(center_label) if center_label in node_options else 0,
-                key="graph_node_selector",
-            )
-            center_node_id = all_nodes_by_type.get(selected_label)
-
-            if center_node_id:
-                st.session_state.graph_center_node = center_node_id
-
-                # Fetch neighborhood
-                neighborhood = store.get_node_neighborhood(center_node_id, depth=1)
-                graph_nodes = neighborhood["nodes"]
-                graph_edges = neighborhood["edges"]
-
-                # Filter nodes by visible types
-                graph_nodes = [n for n in graph_nodes if n["node_type"] in visible_types]
-                visible_node_ids = {n["id"] for n in graph_nodes}
-
-                # Filter edges to only connect visible nodes
-                graph_edges = [
-                    e for e in graph_edges
-                    if e["source_id"] in visible_node_ids and e["target_id"] in visible_node_ids
-                ]
-
-                if not graph_nodes:
-                    st.warning("No visible nodes after filtering. Try enabling more node types.")
-                else:
-                    # Build streamlit-agraph nodes
-                    agraph_nodes = []
-                    for n in graph_nodes:
-                        ntype = n["node_type"]
-                        is_center = n["id"] == center_node_id
-                        edited_by = n.get("properties", {}).get("edited_by", "llm")
-                        # Solid border for user-edited, dashed for LLM
-                        border_width = 3 if is_center else 1
-                        agraph_nodes.append(
-                            AgraphNode(
-                                id=n["id"],
-                                label=n["label"],
-                                color=_NODE_COLORS.get(ntype, "#CCCCCC"),
-                                size=_NODE_SIZES.get(ntype, 20) + (8 if is_center else 0),
-                                title=f"[{ntype}] {n['label']}\nedited by: {edited_by}",
-                                shape="dot",
-                                borderWidth=border_width,
-                                borderWidthSelected=3,
-                            )
-                        )
-
-                    # Build streamlit-agraph edges
-                    agraph_edges = []
-                    for e in graph_edges:
-                        rtype = e["relationship_type"]
-                        agraph_edges.append(
-                            AgraphEdge(
-                                source=e["source_id"],
-                                target=e["target_id"],
-                                label=rtype,
-                                color=_EDGE_COLORS.get(rtype, "#CCCCCC"),
-                            )
-                        )
-
-                    # Render graph
-                    config = AgraphConfig(
-                        height=600,
-                        width=900,
-                        directed=True,
-                        physics=True,
-                        hierarchical=False,
-                    )
-
-                    clicked_node = agraph(
-                        nodes=agraph_nodes,
-                        edges=agraph_edges,
-                        config=config,
-                    )
-
-                    # Handle click to re-center
-                    if clicked_node and clicked_node != center_node_id:
-                        st.session_state.graph_center_node = clicked_node
-                        st.rerun()
+            html = render_graph_3d(all_graph_nodes, all_graph_edges, height=750)
+            st.components.v1.html(html, height=760, scrolling=False)
 
     # --- Editing panel (right column) ---
     with edit_col:
