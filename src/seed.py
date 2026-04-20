@@ -1,11 +1,12 @@
 """Knowledge bank seeding CLI entry point.
 
 Usage:
-    python -m src.seed                        # Full seeding run
-    python -m src.seed --arxiv-id 1706.03762  # Seed a single paper
-    python -m src.seed --only-papers          # Papers only (skip textbooks)
-    python -m src.seed --only-textbooks       # Textbooks only (skip papers)
-    python -m src.seed --dry-run              # Log plan without writing
+    python -m src.seed                                          # Full seeding run
+    python -m src.seed --arxiv-id 1706.03762                   # Seed a single paper
+    python -m src.seed --only-papers                            # Papers only (skip textbooks)
+    python -m src.seed --only-textbooks                         # Textbooks only (skip papers)
+    python -m src.seed --dry-run                                # Log plan without writing
+    python -m src.seed --ground-truth seeds/tree_based_ground_truth/  # Load hand-crafted concepts
 """
 import argparse
 import logging
@@ -15,6 +16,7 @@ from src.config import settings
 from src.integrations.arxiv_client import ArxivFetcher
 from src.integrations.pdf_extractor import PdfExtractor
 from src.services.classifier import OllamaClassifier
+from src.services.ground_truth_loader import load_ground_truth
 from src.services.seeder import Seeder
 from src.store.graph_store import GraphStore
 from src.utils.logging_config import setup_logging
@@ -221,10 +223,31 @@ def main() -> None:
         action="store_true",
         help="Log what would be seeded without writing to the database.",
     )
+    parser.add_argument(
+        "--ground-truth",
+        type=str,
+        metavar="DIR",
+        help="Load hand-crafted concept Markdown files from DIR into the concept-first schema.",
+    )
     args = parser.parse_args()
 
     setup_logging(log_dir=settings.log_dir, log_level=settings.log_level)
     logger = logging.getLogger(__name__)
+
+    # --ground-truth short-circuits all legacy seeder logic.
+    if args.ground_truth:
+        gt_dir = Path(args.ground_truth)
+        if not gt_dir.is_dir():
+            logger.error("--ground-truth directory does not exist: %s", gt_dir)
+            raise SystemExit(1)
+        store = GraphStore(settings.db_path)
+        concepts_n, rels_n = load_ground_truth(gt_dir, store)
+        logger.info(
+            "Ground truth seeding complete: %d concepts, %d relationships loaded.",
+            concepts_n,
+            rels_n,
+        )
+        return
 
     if args.dry_run:
         logger.info(
