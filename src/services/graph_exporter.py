@@ -250,6 +250,14 @@ class GraphExporter:
                     )
             body_lines.append("")
 
+        # Limitations
+        if concept.limitations:
+            body_lines.append("## Limitations")
+            body_lines.append("")
+            for item in concept.limitations:
+                body_lines.append(f"- {item}")
+            body_lines.append("")
+
         # Content angles
         if concept.content_angles:
             body_lines.append("## Content Angles")

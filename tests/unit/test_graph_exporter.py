@@ -55,6 +55,7 @@ def _make_store() -> GraphStore:
             introduced_year=2016,
             domain_tags=["ensemble-learning", "gradient-boosting"],
             source_refs=["Chen & Guestrin 2016"],
+            limitations=["Memory-intensive for large datasets.", "Slower than LightGBM on high-cardinality data."],
             content_angles=["XGBoost vs LightGBM: Which Should You Use?"],
         ),
     ]
@@ -160,6 +161,25 @@ class TestObsidianExport:
 
         dt_note = (tmp_path / "concepts" / "decision-tree.md").read_text()
         assert "Why Decision Trees Still Matter in 2025" in dt_note
+
+    def test_limitations_section_present_when_populated(self, tmp_path: Path) -> None:
+        store = _make_store()
+        exporter = GraphExporter(store)
+        exporter.to_obsidian_vault(tmp_path)
+
+        xgb_note = (tmp_path / "concepts" / "xgboost.md").read_text()
+        assert "## Limitations" in xgb_note
+        assert "- Memory-intensive for large datasets." in xgb_note
+        assert "- Slower than LightGBM on high-cardinality data." in xgb_note
+
+    def test_limitations_section_absent_when_empty(self, tmp_path: Path) -> None:
+        store = _make_store()
+        exporter = GraphExporter(store)
+        exporter.to_obsidian_vault(tmp_path)
+
+        # Decision Tree has no limitations in fixture — section must be omitted
+        dt_note = (tmp_path / "concepts" / "decision-tree.md").read_text()
+        assert "## Limitations" not in dt_note
 
     def test_empty_store_returns_zero(self, tmp_path: Path) -> None:
         store = GraphStore(":memory:")
