@@ -167,3 +167,35 @@ source .venv/bin/activate
 pytest tests/unit/           # Fast — no external dependencies
 pytest tests/ -m slow        # Includes live arXiv API call
 ```
+
+---
+
+## External Visualization Setup
+
+The pipeline emits two visualization artifacts alongside each weekly digest: a Cypher export for Neo4j and a set of Markdown notes for Obsidian. Both represent the same concept graph — nodes for ML/DS concepts and typed edges (BUILDS_ON, ALTERNATIVE_TO, PREREQUISITE_OF) connecting them.
+
+### Neo4j Community Edition
+
+```bash
+brew install neo4j
+neo4j start
+cypher-shell -f cypher_exports/graph-*.cypher
+# Then open http://localhost:7474
+# Run: MATCH p=(:Concept)-[:BUILDS_ON*1..5]->(:Concept) RETURN p LIMIT 50
+```
+
+The Cypher export at `cypher_exports/graph-YYYYMMDD.cypher` contains CREATE statements for all concept nodes and typed relationship edges with narrative labels. Loading it into Neo4j Browser lets you traverse multi-hop concept chains and explore how foundational ideas connect to newly surfaced papers.
+
+### Obsidian
+
+```
+# Open Obsidian → Add Vault → navigate to obsidian_vault/
+# Open Graph View (Ctrl/Cmd+G)
+# Click any concept node to recenter; click wikilinks in notes to navigate
+```
+
+Each concept note at `obsidian_vault/concepts/<slug>.md` has wikilinks for BUILDS_ON, ALTERNATIVE_TO, and PREREQUISITE_OF edges, with relationship labels inlined in prose. Obsidian's Graph View renders these as a navigable network without requiring a separate database process.
+
+### Cytoscape (optional)
+
+The Cytoscape JSON at `exports/graph-YYYYMMDD.json` can be imported into Cytoscape Desktop (File → Import → Network → From File). This is useful for applying layout algorithms or exporting publication-quality graph images.
