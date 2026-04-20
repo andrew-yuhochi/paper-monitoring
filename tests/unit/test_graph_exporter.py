@@ -139,8 +139,8 @@ class TestObsidianExport:
         exporter.to_obsidian_vault(tmp_path)
 
         rf_note = (tmp_path / "concepts" / "random-forest.md").read_text()
-        # Random Forest BUILDS_ON Decision Tree
-        assert "[[Decision Tree]]" in rf_note
+        # Random Forest BUILDS_ON Decision Tree — aliased wikilink: [[slug|Display Name]]
+        assert "[[decision-tree|Decision Tree]]" in rf_note
         # Relationship label should appear inline
         assert "Uses decision trees as base learners" in rf_note
 
@@ -150,7 +150,7 @@ class TestObsidianExport:
         exporter.to_obsidian_vault(tmp_path)
 
         xgb_note = (tmp_path / "concepts" / "xgboost.md").read_text()
-        assert "[[Random Forest]]" in xgb_note
+        assert "[[random-forest|Random Forest]]" in xgb_note
         assert "Competes with Random Forest on tabular data" in xgb_note
 
     def test_content_angles_present(self, tmp_path: Path) -> None:

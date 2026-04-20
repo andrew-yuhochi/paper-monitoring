@@ -230,7 +230,7 @@ class GraphExporter:
                 target_slug = _slug(rel.to_concept)
                 # Resolve display name from slug map; fall back to stored name
                 display_name = slug_to_name.get(target_slug, rel.to_concept)
-                wikilink = f"[[{display_name}]]"
+                wikilink = f"[[{target_slug}|{display_name}]]"
                 if rel.label:
                     body_lines.append(f"- {wikilink} — {rel.label}")
                 else:
